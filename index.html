@@ -11,6 +11,9 @@
   <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
   <!-- Babel Standalone -->
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <!-- Firebase Official Realtime Database SDK (Compat) -->
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
   <!-- Google Fonts -->
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Lao:wght@300;400;500;600;700;800;900&family=Plus+Jakarta+Sans:wght@500;600;700;800&display=swap" rel="stylesheet">
   <style>
@@ -30,6 +33,21 @@
 
   <script type="text/babel">
     const { useState, useEffect, useRef, useMemo } = React;
+
+    // ==================== FIREBASE REALTIME INITIALIZATION ====================
+    const DEFAULT_FIREBASE_URL = 'https://pupatao-6ad11-default-rtdb.asia-southeast1.firebasedatabase.app';
+
+    let firebaseDb = null;
+    try {
+      if (!firebase.apps.length) {
+        firebase.initializeApp({
+          databaseURL: DEFAULT_FIREBASE_URL
+        });
+      }
+      firebaseDb = firebase.database();
+    } catch (e) {
+      console.error('Firebase init error:', e);
+    }
 
     // ==================== BUILT-IN LUCIDE SVG ICONS ====================
     const createIcon = (paths) => ({ className = "w-4 h-4" }) => (
@@ -238,16 +256,13 @@
       { id: 6, name: 'ກຸ້ງ', emoji: '🦐', pastelBg: 'bg-[#FFF4ED]' }
     ];
 
-    const DEFAULT_FIREBASE_URL = 'https://pupatao-6ad11-default-rtdb.asia-southeast1.firebasedatabase.app';
-
     const STORAGE_KEYS = {
-      USERS: 'lao_lrl_users_v26',
-      BETS: 'lao_lrl_bets_v26',
-      TXS: 'lao_lrl_txs_v26',
-      ROUNDS: 'lao_lrl_rounds_v26',
-      CURRENT_ROUND: 'lao_lrl_cur_round_v26',
-      ACTIVE_USER: 'lao_lrl_active_uid_v26',
-      CLOUD_URL: 'lao_lrl_cloud_db_url_v26'
+      USERS: 'lao_lrl_users_v27',
+      BETS: 'lao_lrl_bets_v27',
+      TXS: 'lao_lrl_txs_v27',
+      ROUNDS: 'lao_lrl_rounds_v27',
+      CURRENT_ROUND: 'lao_lrl_cur_round_v27',
+      ACTIVE_USER: 'lao_lrl_active_uid_v27'
     };
 
     const INITIAL_USERS = [
@@ -281,38 +296,43 @@
       { roundId: 36260461, winningAnimals: [5, 4, 1], timestamp: '22/10/2026 18:08', totalBetsVol: 1650000 }
     ];
 
-    // ຟັງຊັນທຳຄວາມສະອາດເບີໂທ (ລຶບຍະຫວ່າງ, ຂີດຕໍ່, ຈ້ຳ ອອກທັງໝົດ ເພື່ອບໍ່ໃຫ້ລ໊ອກອິນຜິດ)
     const normalizePhone = (val) => String(val || '').replace(/[\s\-._()]/g, '').trim();
     const normalizePassword = (val) => String(val || '').trim();
 
-    // ລວມຂໍ້ມູນ (Merge) ໂດຍໃຫ້ຂໍ້ມູນໃໝ່ໃນເຄື່ອງ (localArr) ທັບຂໍ້ມູນເກົ່າ ແລະ ຮັກສາຂໍ້ມູນຈາກເຄື່ອງອື່ນໄວ້
-    const mergeArraysById = (localArr = [], remoteArr = [], idField = 'id') => {
-      const map = new Map();
-      (Array.isArray(remoteArr) ? remoteArr : []).forEach(item => {
-        if (item && item[idField] !== undefined) map.set(String(item[idField]), item);
-      });
-      (Array.isArray(localArr) ? localArr : []).forEach(item => {
-        if (item && item[idField] !== undefined) map.set(String(item[idField]), item);
-      });
-      return Array.from(map.values());
+    // ແປງ Object ຈາກ Firebase ກັບມາເປັນ Array ສະເໝີ
+    const toArray = (val) => {
+      if (!val) return [];
+      if (Array.isArray(val)) return val.filter(Boolean);
+      if (typeof val === 'object') return Object.values(val).filter(Boolean);
+      return [];
     };
 
-    // ລວມລາຍຊື່ Users ທັງຕາມ ID ແລະ ເບີໂທ ເພື່ອປ້ອງກັນບັນຊີຊ້ຳ ຫຼື ລະຫັດຜ່ານເກົ່າທັບລະຫັດໃໝ່
     const mergeUsersSmart = (localUsers = [], remoteUsers = []) => {
       const phoneMap = new Map();
-      (Array.isArray(remoteUsers) ? remoteUsers : []).forEach(u => {
+      toArray(remoteUsers).forEach(u => {
         if (u && u.phone) {
           const cleanP = normalizePhone(u.phone);
           phoneMap.set(cleanP, { ...u, phone: cleanP, password: normalizePassword(u.password) });
         }
       });
-      (Array.isArray(localUsers) ? localUsers : []).forEach(u => {
+      toArray(localUsers).forEach(u => {
         if (u && u.phone) {
           const cleanP = normalizePhone(u.phone);
           phoneMap.set(cleanP, { ...u, phone: cleanP, password: normalizePassword(u.password) });
         }
       });
       return Array.from(phoneMap.values());
+    };
+
+    const mergeArraysById = (localArr = [], remoteArr = [], idField = 'id') => {
+      const map = new Map();
+      toArray(remoteArr).forEach(item => {
+        if (item && item[idField] !== undefined) map.set(String(item[idField]), item);
+      });
+      toArray(localArr).forEach(item => {
+        if (item && item[idField] !== undefined) map.set(String(item[idField]), item);
+      });
+      return Array.from(map.values());
     };
 
     function App() {
@@ -337,11 +357,8 @@
       const [soundEnabled] = useState(true);
       const [selectedDateFilter] = useState('23/10/2026');
 
-      const [cloudDbUrl, setCloudDbUrl] = useState(() => {
-        return localStorage.getItem(STORAGE_KEYS.CLOUD_URL) || DEFAULT_FIREBASE_URL;
-      });
-      const [cloudStatus, setCloudStatus] = useState('connected');
-      const lastLocalActionRef = useRef(0);
+      const [cloudStatus, setCloudStatus] = useState('connecting'); // 'connecting' | 'connected' | 'permission_denied' | 'error'
+      const [cloudErrorDetail, setCloudErrorDetail] = useState('');
 
       const [users, setUsers] = useState(() => {
         const s = localStorage.getItem(STORAGE_KEYS.USERS);
@@ -430,6 +447,12 @@
       const [isAdminCameraActive, setIsAdminCameraActive] = useState(false);
       const [adminCameraError, setAdminCameraError] = useState(null);
 
+      // ອ້າງອີງ State ປັດຈຸບັນສະເໝີເວລາຂຽນຂຶ້ນ Firebase
+      const stateRef = useRef({ users, bets, transactions, roundsHistory, currentRound });
+      useEffect(() => {
+        stateRef.current = { users, bets, transactions, roundsHistory, currentRound };
+      }, [users, bets, transactions, roundsHistory, currentRound]);
+
       const currentUser = useMemo(() => {
         return users.find(u => u.id === activeUserId) || users[0] || null;
       }, [users, activeUserId]);
@@ -478,203 +501,175 @@
         setTimeout(() => setToast(null), 3500);
       };
 
-      // ==================== SAFE IMMEDIATE STORAGE & FIREBASE REALTIME SYNC ====================
-      const broadcastRef = useRef(null);
+      // ==================== FIREBASE REALTIME WEBSOCKET LISTENER ====================
+      useEffect(() => {
+        if (!firebaseDb) {
+          setCloudStatus('error');
+          setCloudErrorDetail('ບໍ່ສາມາດໂຫຼດ Firebase SDK ໄດ້');
+          return;
+        }
 
-      const getFirebaseEndpoint = (urlStr) => {
-        const target = (urlStr || DEFAULT_FIREBASE_URL).trim().replace(/\/$/, '');
-        return target.endsWith('.json') ? target : `${target}/lrl_game_state.json`;
-      };
+        const gameRef = firebaseDb.ref('lrl_game_state');
 
+        const handleValueChange = (snapshot) => {
+          const data = snapshot.val();
+          setCloudStatus('connected');
+          setCloudErrorDetail('');
+
+          if (data) {
+            const cloudUsers = toArray(data.users);
+            if (cloudUsers.length > 0) {
+              setUsers(cloudUsers);
+              localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(cloudUsers));
+            }
+
+            const cloudBets = toArray(data.bets);
+            setBets(cloudBets);
+            localStorage.setItem(STORAGE_KEYS.BETS, JSON.stringify(cloudBets));
+
+            const cloudTxs = toArray(data.transactions);
+            setTransactions(cloudTxs);
+            localStorage.setItem(STORAGE_KEYS.TXS, JSON.stringify(cloudTxs));
+
+            const cloudRounds = toArray(data.roundsHistory);
+            if (cloudRounds.length > 0) {
+              setRoundsHistory(cloudRounds);
+              localStorage.setItem(STORAGE_KEYS.ROUNDS, JSON.stringify(cloudRounds));
+            }
+
+            if (data.currentRound) {
+              setCurrentRound(prev => {
+                const isNewRound = data.currentRound.roundId !== prev.roundId;
+                const nextR = isNewRound ? data.currentRound : { ...data.currentRound, timer: prev.timer };
+                localStorage.setItem(STORAGE_KEYS.CURRENT_ROUND, JSON.stringify(nextR));
+                return nextR;
+              });
+            }
+          } else {
+            // ຖ້າຖານຂໍ້ມູນເທິງ Firebase ຍັງຫວ່າງເປົ່າ ໃຫ້ສ້າງຂໍ້ມູນເລີ່ມຕົ້ນຂຶ້ນໄປທັນທີ
+            gameRef.set({
+              users: stateRef.current.users,
+              bets: stateRef.current.bets,
+              transactions: stateRef.current.transactions,
+              roundsHistory: stateRef.current.roundsHistory,
+              currentRound: stateRef.current.currentRound,
+              updatedAt: Date.now()
+            }).catch(err => {
+              if (err && err.code === 'PERMISSION_DENIED') {
+                setCloudStatus('permission_denied');
+                setCloudErrorDetail('Firebase ຍັງບໍ່ໄດ້ເປີດ Rules (.read: true, .write: true)');
+              }
+            });
+          }
+        };
+
+        const handleError = (err) => {
+          console.error('Firebase Realtime Error:', err);
+          if (err && (err.code === 'PERMISSION_DENIED' || String(err.message).includes('permission_denied'))) {
+            setCloudStatus('permission_denied');
+            setCloudErrorDetail('Firebase ລ໊ອກສິດ! ກະລຸນາເຂົ້າ Firebase Console ➔ Realtime Database ➔ Rules ແລ້ວປ່ຽນເປັນ true');
+          } else {
+            setCloudStatus('error');
+            setCloudErrorDetail(err?.message || 'ການເຊື່ອມຕໍ່ຂັດຂ້ອງ');
+          }
+        };
+
+        gameRef.on('value', handleValueChange, handleError);
+        return () => {
+          gameRef.off('value', handleValueChange);
+        };
+      }, []);
+
+      // ຟັງຊັນບັນທຶກຂໍ້ມູນລົງທັງໃນເຄື່ອງ ແລະ ຍິງຂຶ້ນ Firebase Realtime Database ທັນທີ
       const saveImmediate = async (override = {}) => {
-        lastLocalActionRef.current = Date.now();
+        const nextUsers = override.users !== undefined ? override.users : stateRef.current.users;
+        const nextBets = override.bets !== undefined ? override.bets : stateRef.current.bets;
+        const nextTxs = override.transactions !== undefined ? override.transactions : stateRef.current.transactions;
+        const nextRounds = override.roundsHistory !== undefined ? override.roundsHistory : stateRef.current.roundsHistory;
+        const nextCurRound = override.currentRound !== undefined ? override.currentRound : stateRef.current.currentRound;
+
         if (override.users !== undefined) {
-          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(override.users));
-          setUsers(override.users);
+          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(nextUsers));
+          setUsers(nextUsers);
         }
         if (override.bets !== undefined) {
-          localStorage.setItem(STORAGE_KEYS.BETS, JSON.stringify(override.bets));
-          setBets(override.bets);
+          localStorage.setItem(STORAGE_KEYS.BETS, JSON.stringify(nextBets));
+          setBets(nextBets);
         }
         if (override.transactions !== undefined) {
-          localStorage.setItem(STORAGE_KEYS.TXS, JSON.stringify(override.transactions));
-          setTransactions(override.transactions);
+          localStorage.setItem(STORAGE_KEYS.TXS, JSON.stringify(nextTxs));
+          setTransactions(nextTxs);
         }
         if (override.roundsHistory !== undefined) {
-          localStorage.setItem(STORAGE_KEYS.ROUNDS, JSON.stringify(override.roundsHistory));
-          setRoundsHistory(override.roundsHistory);
+          localStorage.setItem(STORAGE_KEYS.ROUNDS, JSON.stringify(nextRounds));
+          setRoundsHistory(nextRounds);
         }
         if (override.currentRound !== undefined) {
-          localStorage.setItem(STORAGE_KEYS.CURRENT_ROUND, JSON.stringify(override.currentRound));
-          setCurrentRound(override.currentRound);
+          localStorage.setItem(STORAGE_KEYS.CURRENT_ROUND, JSON.stringify(nextCurRound));
+          setCurrentRound(nextCurRound);
         }
+
+        if (!firebaseDb) return false;
+
         try {
-          broadcastRef.current?.postMessage({ type: 'SYNC' });
-        } catch (e) {}
-        return await pushStateToCloud(override);
-      };
+          const gameRef = firebaseDb.ref('lrl_game_state');
+          // ດຶງຂໍ້ມູນລ່າສຸດຈາກ Cloud ມາ Merge ເພື່ອປ້ອງກັນການຂຽນທັບຂໍ້ມູນຂອງເຄື່ອງອື່ນ
+          const snap = await gameRef.get();
+          const remote = snap.exists() ? snap.val() : null;
 
-      const pushStateToCloud = async (overrideData = {}) => {
-        const activeUrl = cloudDbUrl || DEFAULT_FIREBASE_URL;
-        if (!activeUrl) return false;
-        try {
-          const endpoint = getFirebaseEndpoint(activeUrl);
+          const finalUsers = remote?.users ? mergeUsersSmart(nextUsers, remote.users) : nextUsers;
+          const finalBets = remote?.bets ? mergeArraysById(nextBets, remote.bets, 'id') : nextBets;
+          const finalTxs = remote?.transactions ? mergeArraysById(nextTxs, remote.transactions, 'id') : nextTxs;
+          const finalRounds = remote?.roundsHistory ? mergeArraysById(nextRounds, remote.roundsHistory, 'roundId') : nextRounds;
 
-          let remoteData = null;
-          try {
-            const getRes = await fetch(endpoint, { cache: 'no-store' });
-            if (getRes.ok) {
-              remoteData = await getRes.json();
-            }
-          } catch (e) {}
-
-          const localUsers = overrideData.users !== undefined ? overrideData.users : users;
-          const localBets = overrideData.bets !== undefined ? overrideData.bets : bets;
-          const localTxs = overrideData.transactions !== undefined ? overrideData.transactions : transactions;
-          const localRounds = overrideData.roundsHistory !== undefined ? overrideData.roundsHistory : roundsHistory;
-          const localCurRound = overrideData.currentRound !== undefined ? overrideData.currentRound : currentRound;
-
-          const mergedUsers = remoteData?.users ? mergeUsersSmart(localUsers, remoteData.users) : localUsers;
-          const mergedBets = remoteData?.bets ? mergeArraysById(localBets, remoteData.bets, 'id') : localBets;
-          const mergedTxs = remoteData?.transactions ? mergeArraysById(localTxs, remoteData.transactions, 'id') : localTxs;
-          const mergedRounds = remoteData?.roundsHistory ? mergeArraysById(localRounds, remoteData.roundsHistory, 'roundId') : localRounds;
-
-          // ອັບເດດ localStorage ດ້ວຍຂໍ້ມູນທີ່ລວມກັນແລ້ວ
-          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(mergedUsers));
-          setUsers(mergedUsers);
-
-          const payload = {
-            users: mergedUsers,
-            bets: mergedBets,
-            transactions: mergedTxs,
-            roundsHistory: mergedRounds,
-            currentRound: localCurRound,
+          await gameRef.set({
+            users: finalUsers,
+            bets: finalBets,
+            transactions: finalTxs,
+            roundsHistory: finalRounds,
+            currentRound: nextCurRound,
             updatedAt: Date.now()
-          };
-
-          const putRes = await fetch(endpoint, {
-            method: 'PUT',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(payload)
           });
 
-          if (!putRes.ok) throw new Error('PUT failed');
           setCloudStatus('connected');
+          setCloudErrorDetail('');
           return true;
         } catch (err) {
-          setCloudStatus('error');
+          console.error('Firebase write error:', err);
+          if (err && (err.code === 'PERMISSION_DENIED' || String(err.message).includes('permission_denied'))) {
+            setCloudStatus('permission_denied');
+            setCloudErrorDetail('Firebase ບໍ່ອະນຸຍາດໃຫ້ບັນທຶກ! ກະລຸນາຕັ້ງຄ່າ Rules ໃນ Firebase ເປັນ .read: true, .write: true');
+          } else {
+            setCloudStatus('error');
+          }
           return false;
         }
       };
 
-      const pullStateFromCloud = async (force = false) => {
-        const activeUrl = cloudDbUrl || DEFAULT_FIREBASE_URL;
-        if (!activeUrl) return null;
-        if (!force && Date.now() - lastLocalActionRef.current < 3500) return null;
-
+      const forcePullFromCloud = async () => {
+        if (!firebaseDb) return;
         try {
-          const endpoint = getFirebaseEndpoint(activeUrl);
-          const res = await fetch(endpoint, { cache: 'no-store' });
-          if (!res.ok) throw new Error('Sync failed');
-          const data = await res.json();
-
-          if (data) {
-            if (Array.isArray(data.users) && data.users.length > 0) {
-              const localU = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
-              const combinedUsers = mergeUsersSmart(localU, data.users);
-              setUsers(combinedUsers);
-              localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(combinedUsers));
-            }
-            if (Array.isArray(data.bets)) {
-              const localB = JSON.parse(localStorage.getItem(STORAGE_KEYS.BETS) || '[]');
-              const combinedBets = mergeArraysById(localB, data.bets, 'id');
-              setBets(combinedBets);
-              localStorage.setItem(STORAGE_KEYS.BETS, JSON.stringify(combinedBets));
-            }
-            if (Array.isArray(data.transactions)) {
-              const localT = JSON.parse(localStorage.getItem(STORAGE_KEYS.TXS) || '[]');
-              const combinedTxs = mergeArraysById(localT, data.transactions, 'id');
-              setTransactions(combinedTxs);
-              localStorage.setItem(STORAGE_KEYS.TXS, JSON.stringify(combinedTxs));
-            }
-            if (Array.isArray(data.roundsHistory) && data.roundsHistory.length > 0) {
-              setRoundsHistory(data.roundsHistory);
-              localStorage.setItem(STORAGE_KEYS.ROUNDS, JSON.stringify(data.roundsHistory));
-            }
-            if (data.currentRound) {
-              setCurrentRound(prev => {
-                const isNewRound = data.currentRound.roundId !== prev.roundId;
-                const nextRoundState = isNewRound
-                  ? data.currentRound
-                  : { ...data.currentRound, timer: prev.timer };
-                localStorage.setItem(STORAGE_KEYS.CURRENT_ROUND, JSON.stringify(nextRoundState));
-                return nextRoundState;
-              });
-            }
+          const snap = await firebaseDb.ref('lrl_game_state').get();
+          if (snap.exists()) {
+            const data = snap.val();
+            if (data.users) setUsers(toArray(data.users));
+            if (data.bets) setBets(toArray(data.bets));
+            if (data.transactions) setTransactions(toArray(data.transactions));
+            if (data.roundsHistory) setRoundsHistory(toArray(data.roundsHistory));
+            if (data.currentRound) setCurrentRound(prev => ({ ...data.currentRound, timer: prev.timer }));
             setCloudStatus('connected');
-            return data;
-          } else {
-            await pushStateToCloud();
-            setCloudStatus('connected');
-            return null;
           }
         } catch (err) {
-          setCloudStatus('error');
-          return null;
-        }
-      };
-
-      useEffect(() => {
-        pullStateFromCloud(true);
-      }, []);
-
-      useEffect(() => {
-        try {
-          broadcastRef.current = new BroadcastChannel('lao_lrl_sync_v26');
-          broadcastRef.current.onmessage = (event) => {
-            if (event.data?.type === 'SYNC') loadStorageData();
-          };
-        } catch (e) {}
-
-        const handleStorageEvent = (e) => {
-          if (Object.values(STORAGE_KEYS).includes(e.key)) {
-            loadStorageData();
+          if (err && err.code === 'PERMISSION_DENIED') {
+            setCloudStatus('permission_denied');
           }
-        };
-        window.addEventListener('storage', handleStorageEvent);
-
-        return () => {
-          broadcastRef.current?.close();
-          window.removeEventListener('storage', handleStorageEvent);
-        };
-      }, []);
-
-      const loadStorageData = () => {
-        const u = localStorage.getItem(STORAGE_KEYS.USERS);
-        const b = localStorage.getItem(STORAGE_KEYS.BETS);
-        const t = localStorage.getItem(STORAGE_KEYS.TXS);
-        const r = localStorage.getItem(STORAGE_KEYS.ROUNDS);
-        const cr = localStorage.getItem(STORAGE_KEYS.CURRENT_ROUND);
-        if (u) setUsers(JSON.parse(u));
-        if (b) setBets(JSON.parse(b));
-        if (t) setTransactions(JSON.parse(t));
-        if (r) setRoundsHistory(JSON.parse(r));
-        if (cr) {
-          const parsedCr = JSON.parse(cr);
-          setCurrentRound(prev => ({ ...parsedCr, timer: prev.timer }));
         }
       };
 
       useEffect(() => { localStorage.setItem(STORAGE_KEYS.ACTIVE_USER, activeUserId); }, [activeUserId]);
-      useEffect(() => { localStorage.setItem(STORAGE_KEYS.CLOUD_URL, cloudDbUrl); }, [cloudDbUrl]);
 
       useEffect(() => {
-        let tickCount = 0;
         const timerId = setInterval(() => {
-          tickCount += 1;
-          if (tickCount % 3 === 0) {
-            pullStateFromCloud(false);
-          }
           setCurrentRound(prev => {
             if (prev.status !== 'betting') return prev;
             if (prev.timer > 1) {
@@ -686,7 +681,7 @@
           });
         }, 1000);
         return () => clearInterval(timerId);
-      }, [adminManualDice, currentRound.status, cloudDbUrl]);
+      }, [adminManualDice, currentRound.status]);
 
       useEffect(() => {
         if (chatScrollRef.current) {
@@ -720,7 +715,6 @@
         triggerToast('ປິດກ້ອງໄລສົດແລ້ວ', 'info');
       };
 
-      // ==================== ແກ້ໄຂລະບົບກວດສອບ Login ໃຫ້ແม่ນຢຳ 100% ====================
       const handleLoginSubmit = async (e) => {
         e.preventDefault();
         soundClick();
@@ -734,25 +728,20 @@
 
         setIsSubmittingAuth(true);
 
-        // 1. ລວມຂໍ້ມູນ Users ໃນເຄື່ອງ ແລະ ດຶງຂໍ້ມູນລ່າສຸດຈາກ Firebase ມາໂຮມກັນກ່ອນກວດສອບ
-        const localSavedUsers = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
-        let latestUsers = mergeUsersSmart(users, localSavedUsers);
-
-        try {
-          const res = await fetch(getFirebaseEndpoint(cloudDbUrl), { cache: 'no-store' });
-          if (res.ok) {
-            const cloudData = await res.json();
-            if (Array.isArray(cloudData?.users)) {
-              latestUsers = mergeUsersSmart(latestUsers, cloudData.users);
+        let latestUsers = [...users];
+        if (firebaseDb) {
+          try {
+            const snap = await firebaseDb.ref('lrl_game_state/users').get();
+            if (snap.exists()) {
+              latestUsers = mergeUsersSmart(latestUsers, snap.val());
               setUsers(latestUsers);
               localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(latestUsers));
             }
-          }
-        } catch (err) {}
+          } catch (err) {}
+        }
 
         setIsSubmittingAuth(false);
 
-        // 2. ຄົ້ນຫາບັນຊີດ້ວຍເບີໂທທີ່ທຳຄວາມສະອາດແລ້ວ (ຮອງຮັບທັງກໍລະນີລືມປ້ອນເລກ 0 ທາງໜ້າ)
         const foundByPhone = latestUsers.find(u => {
           const dbPhone = normalizePhone(u.phone);
           return (
@@ -763,12 +752,12 @@
         });
 
         if (!foundByPhone) {
-          triggerToast(`ບໍ່ພົບເບີໂທ ${inputPhone} ໃນລະບົບ! ກະລຸນາກວດສອບເບີໂທຄືນ`, 'error');
+          triggerToast(`ບໍ່ພົບເບີໂທ ${inputPhone} ໃນລະບົບ!`, 'error');
           return;
         }
 
         if (normalizePassword(foundByPhone.password) !== inputPwd) {
-          triggerToast('ລະຫັດຜ່ານບໍ່ຖືກຕ້ອງ! (ກົດຮູບຕາ 👁️ ເພື່ອກວດເບິ່ງລະຫັດທີ່ພິມ)', 'error');
+          triggerToast('ລະຫັດຜ່ານບໍ່ຖືກຕ້ອງ! (ກົດຮູບຕາ 👁️ ເພື່ອກວດເບິ່ງລະຫັດ)', 'error');
           return;
         }
 
@@ -797,17 +786,15 @@
 
         setIsSubmittingAuth(true);
 
-        // ດຶງຂໍ້ມູນລ່າສຸດຈາກ Cloud ກ່ອນກວດສອບເບີໂທຊ້ຳ
-        let latestUsers = users;
-        try {
-          const res = await fetch(getFirebaseEndpoint(cloudDbUrl), { cache: 'no-store' });
-          if (res.ok) {
-            const cloudData = await res.json();
-            if (Array.isArray(cloudData?.users)) {
-              latestUsers = mergeUsersSmart(users, cloudData.users);
+        let latestUsers = [...users];
+        if (firebaseDb) {
+          try {
+            const snap = await firebaseDb.ref('lrl_game_state/users').get();
+            if (snap.exists()) {
+              latestUsers = mergeUsersSmart(latestUsers, snap.val());
             }
-          }
-        } catch (err) {}
+          } catch (err) {}
+        }
 
         const exists = latestUsers.find(u => normalizePhone(u.phone) === phone);
         if (exists) {
@@ -845,7 +832,7 @@
         const cleanAdminPass = normalizePassword(authPassword);
         if (cleanAdminPass === 'admin888' || cleanAdminPass === '1234' || cleanAdminPass === 'admin') {
           setAppAccessMode('admin');
-          pullStateFromCloud(true);
+          forcePullFromCloud();
           triggerToast('ເຂົ້າສູ່ລະບົບແອັດມິນສຳເລັດ', 'success');
           soundFanfare();
         } else {
@@ -853,7 +840,6 @@
         }
       };
 
-      // ==================== ແກ້ໄຂການສ້າງ User ຈາກແອັດມິນໃຫ້ບັນທຶກຂຶ້ນ Cloud 100% ====================
       const handleAdminAddUser = async (e) => {
         e.preventDefault();
         soundClick();
@@ -868,17 +854,15 @@
 
         setIsSubmittingAuth(true);
 
-        // ດຶງລາຍຊື່ລ່າສຸດຈາກ Cloud ມາລວມກ່ອນ
-        let currentList = users;
-        try {
-          const res = await fetch(getFirebaseEndpoint(cloudDbUrl), { cache: 'no-store' });
-          if (res.ok) {
-            const cloudData = await res.json();
-            if (Array.isArray(cloudData?.users)) {
-              currentList = mergeUsersSmart(users, cloudData.users);
+        let currentList = [...users];
+        if (firebaseDb) {
+          try {
+            const snap = await firebaseDb.ref('lrl_game_state/users').get();
+            if (snap.exists()) {
+              currentList = mergeUsersSmart(currentList, snap.val());
             }
-          }
-        } catch (err) {}
+          } catch (err) {}
+        }
 
         const initBal = Number(newUserForm.initialBalance) || 0;
         const existingUser = currentList.find(u => normalizePhone(u.phone) === phone);
@@ -887,7 +871,6 @@
         let updatedUsers;
 
         if (existingUser) {
-          // ຖ້າເບີໂທນີ້ມີຢູ່ແລ້ວ ໃຫ້ອັບເດດລະຫັດຜ່ານໃໝ່ ແລະ ຍອດເງິນທັນທີ ເພື່ອໃຫ້ລູກຄ້າລ໊ອກອິນໄດ້ເລີຍ
           targetUser = {
             ...existingUser,
             name,
@@ -932,9 +915,9 @@
         soundFanfare();
 
         if (cloudOk) {
-          triggerToast(`ບັນທຶກບັນຊີ ${targetUser.name} ຂຶ້ນ Cloud ສຳເລັດ! ລ໊ອກອິນໄດ້ທັນທີ`, 'success');
+          triggerToast(`ບັນທຶກບັນຊີ ${targetUser.name} ຂຶ້ນ Firebase ສຳເລັດ! ທຸກເຄື່ອງລ໊ອກອິນໄດ້ທັນທີ`, 'success');
         } else {
-          triggerToast(`ບັນທຶກໃນເຄື່ອງສຳເລັດ (ກະລຸນາກວດສອບ Rules ໃນ Firebase ຖ້າຈະລ໊ອກອິນຂ້າມເຄື່ອງ)`, 'info');
+          triggerToast(`⚠️ ບໍ່ສາມາດບັນທຶກຂຶ້ນ Firebase! ກະລຸນາເປີດ Rules (.write: true) ໃນ Firebase Console`, 'error');
         }
       };
 
@@ -1063,7 +1046,7 @@
         setBetQueue(prev => prev.filter((_, i) => i !== index));
       };
 
-      const handleConfirmBet = () => {
+      const handleConfirmBet = async () => {
         if (!currentUser) {
           setAppAccessMode('auth');
           return;
@@ -1144,7 +1127,7 @@
 
         const updatedBets = [newSlip, ...bets];
 
-        saveImmediate({
+        await saveImmediate({
           users: updatedUsers,
           bets: updatedBets
         });
@@ -1484,6 +1467,13 @@
           {/* Main Container */}
           <div className="w-full max-w-md bg-[#FAFAFA] min-h-screen flex flex-col shadow-2xl relative overflow-x-hidden border-x border-red-100">
 
+            {/* ແຖບແຈ້ງເຕືອນຖ້າ Firebase ຍັງບໍ່ໄດ້ເປີດ Rules */}
+            {cloudStatus === 'permission_denied' && (
+              <div className="bg-amber-400 text-slate-950 px-3.5 py-2 text-[11px] font-extrabold text-center border-b border-amber-500">
+                ⚠️ ຖານຂໍ້ມູນ Firebase ຍັງລ໊ອກສິດຢູ່! ກະລຸນາເຂົ້າ Firebase Console ➔ Realtime Database ➔ Rules ແລ້ວປ່ຽນ .read ແລະ .write ເປັນ true ເພື່ອໃຫ້ທຸກເຄື່ອງເຊື່ອມຕໍ່ກັນ.
+              </div>
+            )}
+
             {/* ==================== 0. AUTH LOGIN & REGISTER VIEW ==================== */}
             {appAccessMode === 'auth' && (
               <div className="flex-1 bg-gradient-to-br from-[#EF4136] via-[#DC2626] to-[#991B1B] text-white flex flex-col justify-between p-6 relative overflow-hidden">
@@ -1585,7 +1575,7 @@
                         disabled={isSubmittingAuth}
                         className="w-full bg-[#EF4136] hover:bg-[#DC2626] disabled:opacity-60 text-white font-black py-3.5 rounded-2xl shadow-md transition active:scale-95 text-sm"
                       >
-                        {isSubmittingAuth ? 'ກຳລັງກວດສອບຂໍ້ມູນ...' : 'ເຂົ້າສູ່ລະບົບລູກຄ້າ'}
+                        {isSubmittingAuth ? 'ກຳລັງດຶງຂໍ້ມູນອອນລາຍ...' : 'ເຂົ້າສູ່ລະບົບລູກຄ້າ'}
                       </button>
                     </form>
                   ) : authViewMode === 'register' && !isAdminPortal ? (
@@ -1640,7 +1630,7 @@
                         disabled={isSubmittingAuth}
                         className="w-full bg-[#EF4136] hover:bg-[#DC2626] disabled:opacity-60 text-white font-black py-3.5 rounded-2xl shadow-md transition active:scale-95 text-sm"
                       >
-                        {isSubmittingAuth ? 'ກຳລັງສ້າງບັນຊີ...' : 'ລົງທະບຽນບັນຊີໃໝ່ (+50,000 ₭)'}
+                        {isSubmittingAuth ? 'ກຳລັງບັນທຶກຂຶ້ນ Cloud...' : 'ລົງທະບຽນບັນຊີໃໝ່ (+50,000 ₭)'}
                       </button>
                     </form>
                   ) : (
@@ -1677,9 +1667,18 @@
                   )}
                 </div>
 
-                <div className="text-center text-[11px] text-red-200 font-medium flex items-center justify-center gap-1.5">
-                  <span className={`w-2 h-2 rounded-full ${cloudStatus === 'connected' ? 'bg-emerald-400' : 'bg-amber-300'}`}></span>
-                  <span>ປູປາເຕົ້າ ລວຍ ລວຍ ລວຍ • ຊິ້ງຂໍ້ມູນອອນລາຍອັດຕະໂນມັດ</span>
+                <div className="text-center text-[11px] text-red-100 font-medium flex items-center justify-center gap-1.5">
+                  <span className={`w-2.5 h-2.5 rounded-full ${
+                    cloudStatus === 'connected' ? 'bg-emerald-400 animate-pulse' :
+                    cloudStatus === 'permission_denied' ? 'bg-amber-300' : 'bg-red-300'
+                  }`}></span>
+                  <span>
+                    {cloudStatus === 'connected'
+                      ? `ເຊື່ອມຕໍ່ Firebase ອອນລາຍສຳເລັດ (${users.length} ບັນຊີ)`
+                      : cloudStatus === 'permission_denied'
+                      ? 'Firebase ລ໊ອກສິດ Rules (ກະລຸນາເປີດ .read/.write: true)'
+                      : 'ກຳລັງເຊື່ອມຕໍ່ຖານຂໍ້ມູນອອນລາຍ...'}
+                  </span>
                 </div>
               </div>
             )}
@@ -1700,8 +1699,9 @@
                       <h1 className="text-[17px] font-black tracking-tight text-white leading-tight drop-shadow-xs">
                         ປູປາເຕົ້າ ລວຍ ລວຍ ລວຍ
                       </h1>
-                      <p className="text-[10px] text-red-100 font-medium leading-none mt-0.5">
-                        ເລກມະຫາໂຊກ ວັນນີ້ ແລະ ວັນທີ່ຜ່ານມາ
+                      <p className="text-[10px] text-red-100 font-medium leading-none mt-0.5 flex items-center gap-1">
+                        <span className={`w-1.5 h-1.5 rounded-full ${cloudStatus === 'connected' ? 'bg-emerald-300' : 'bg-amber-300'}`}></span>
+                        <span>ເລກມະຫາໂຊກ ອອນລາຍສົດ</span>
                       </p>
                     </div>
                   </div>
@@ -1710,7 +1710,7 @@
                     <button
                       onClick={() => {
                         soundClick();
-                        pullStateFromCloud(true);
+                        forcePullFromCloud();
                         setShowHistoryModal(true);
                         setHistoryTab('results');
                       }}
@@ -1800,7 +1800,7 @@
                     <div className="flex items-center gap-1.5">
                       <button
                         onClick={() => {
-                          pullStateFromCloud(true);
+                          forcePullFromCloud();
                           setShowHistoryModal(true);
                           setHistoryTab('tx');
                           setShowUserDropdown(false);
@@ -1876,7 +1876,7 @@
                         <button
                           onClick={() => {
                             soundClick();
-                            pullStateFromCloud(true);
+                            forcePullFromCloud();
                             setSlipFilter('all');
                             setShowHistoryModal(true);
                             setHistoryTab('slips');
@@ -1940,7 +1940,7 @@
                         <button
                           onClick={() => {
                             soundClick();
-                            pullStateFromCloud(true);
+                            forcePullFromCloud();
                             setShowHistoryModal(true);
                             setHistoryTab('results');
                           }}
@@ -2357,14 +2357,75 @@
                   >
                     <Globe className="w-4 h-4" />
                     <span>ອອນລາຍ</span>
-                    {cloudStatus === 'connected' && (
-                      <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-500"></span>
-                    )}
+                    <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${cloudStatus === 'connected' ? 'bg-emerald-500' : 'bg-amber-500 animate-ping'}`}></span>
                   </button>
                 </div>
 
                 {adminTab === 'cloud_sync' && (
                   <div className="p-4 space-y-4">
+                    <div className="bg-white border border-red-200 rounded-3xl p-4 shadow-xs space-y-3 text-xs">
+                      <div className="flex justify-between items-center border-b border-red-100 pb-2">
+                        <div>
+                          <h4 className="font-black text-sm text-slate-900">☁️ ສະຖານະການເຊື່ອມຕໍ່ Firebase Cloud</h4>
+                          <p className="text-[10px] text-slate-500">ເຊື່ອມຕໍ່ຜ່ານ WebSocket ແບບ Real-time</p>
+                        </div>
+                        <span className={`px-2.5 py-1 rounded-full text-[10px] font-extrabold ${
+                          cloudStatus === 'connected' ? 'bg-emerald-100 text-emerald-700' :
+                          cloudStatus === 'permission_denied' ? 'bg-amber-100 text-amber-800' : 'bg-red-100 text-[#EF4136]'
+                        }`}>
+                          {cloudStatus === 'connected' ? '● ເຊື່ອມຕໍ່ສຳເລັດ' : cloudStatus === 'permission_denied' ? '⚠️ ຕິດສິດ Rules' : '✕ ເຊື່ອມຕໍ່ຜິດພາດ'}
+                        </span>
+                      </div>
+
+                      {cloudStatus === 'permission_denied' && (
+                        <div className="bg-amber-50 border-2 border-amber-400 rounded-2xl p-3 space-y-2 text-slate-800">
+                          <div className="font-black text-amber-900 text-xs">⚠️ ວິທີແກ້ໄຂເພື່ອໃຫ້ທຸກເຄື່ອງຊິ້ງຂໍ້ມູນຫາກັນໄດ້:</div>
+                          <ol className="list-decimal list-inside space-y-1 text-[11px] font-medium">
+                            <li>ເປີດເວັບ <strong>console.firebase.google.com</strong> ແລ້ວເລືອກໂປຣເຈັກ <strong>pupatao-6ad11</strong></li>
+                            <li>ເຂົ້າເມນູ <strong>Realtime Database</strong> ➔ ກົດແຖບ <strong>Rules</strong></li>
+                            <li>ປ່ຽນຄ່າເປັນດັ່ງລຸ່ມນີ້ ແລ້ວກົດ <strong>Publish</strong>:</li>
+                          </ol>
+                          <pre className="bg-slate-900 text-emerald-400 p-2.5 rounded-xl font-mono text-[10px] overflow-x-auto">
+{`{
+  "rules": {
+    ".read": true,
+    ".write": true
+  }
+}`}
+                          </pre>
+                        </div>
+                      )}
+
+                      <div className="flex gap-2">
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            soundSelect();
+                            const ok = await saveImmediate({});
+                            if (ok) {
+                              triggerToast('ຊິ້ງຂໍ້ມູນທັງໝົດຂຶ້ນ Firebase ສຳເລັດ!', 'success');
+                            } else {
+                              triggerToast('ບໍ່ສາມາດຂຽນລົງ Firebase! ກະລຸນາເປີດ Rules (.write: true)', 'error');
+                            }
+                          }}
+                          className="flex-1 bg-[#EF4136] text-white font-black py-2.5 rounded-xl shadow-xs"
+                        >
+                          ອັບໂຫຼດຂໍ້ມູນຂຶ້ນ Cloud ດຽວນີ້
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            soundSelect();
+                            forcePullFromCloud();
+                            triggerToast('ດຶງຂໍ້ມູນລ່າສຸດຈາກ Firebase ແລ້ວ', 'info');
+                          }}
+                          className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold px-3 py-2.5 rounded-xl"
+                        >
+                          ດຶງຂໍ້ມູນລ່າສຸດ
+                        </button>
+                      </div>
+                    </div>
+
                     <div className="bg-white border border-red-200 rounded-3xl p-4 shadow-xs space-y-3">
                       <div className="flex items-center gap-2 border-b border-red-100 pb-2.5">
                         <div className="w-9 h-9 rounded-2xl bg-[#EF4136] text-white flex items-center justify-center">
@@ -2406,62 +2467,6 @@
                         </div>
                       </div>
                     </div>
-
-                    <div className="bg-white border border-red-200 rounded-3xl p-4 shadow-xs space-y-3 text-xs">
-                      <div className="flex justify-between items-center border-b border-red-100 pb-2">
-                        <div>
-                          <h4 className="font-black text-sm text-slate-900">☁️ ຖານຂໍ້ມູນອອນລາຍ Firebase</h4>
-                          <p className="text-[10px] text-slate-500">ທຸກເຄື່ອງທີ່ເປີດເວັບນີ້ຈະຊິ້ງຂໍ້ມູນເຂົ້າກັນໂດຍອັດຕະໂນມັດ</p>
-                        </div>
-                        <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
-                          cloudStatus === 'connected' ? 'bg-emerald-100 text-emerald-700' :
-                          cloudStatus === 'error' ? 'bg-red-100 text-[#EF4136]' : 'bg-slate-100 text-slate-600'
-                        }`}>
-                          {cloudStatus === 'connected' ? '● ອອນລາຍສົດ' : cloudStatus === 'error' ? '✕ ຕິດສິດ Rules ໃນ Firebase' : '○ ໂໝດໃນເຄື່ອງ'}
-                        </span>
-                      </div>
-
-                      <div>
-                        <label className="font-bold text-slate-700 block mb-1">Firebase Realtime DB URL:</label>
-                        <input
-                          type="url"
-                          placeholder={DEFAULT_FIREBASE_URL}
-                          value={cloudDbUrl}
-                          onChange={(e) => setCloudDbUrl(e.target.value)}
-                          className="w-full bg-slate-50 border border-red-200 rounded-xl p-2.5 font-num text-xs focus:outline-none focus:border-[#EF4136]"
-                        />
-                      </div>
-
-                      <div className="flex gap-2">
-                        <button
-                          type="button"
-                          onClick={async () => {
-                            soundSelect();
-                            const ok = await pushStateToCloud();
-                            if (ok) {
-                              triggerToast('ບັນທຶກ ແລະ ອັບໂຫຼດຂໍ້ມູນຂຶ້ນ Firebase Cloud ແລ້ວ!', 'success');
-                            } else {
-                              triggerToast('ບໍ່ສາມາດຂຽນລົງ Firebase ໄດ້! ກະລຸນາເປີດ Rules .write: true ໃນ Firebase Console', 'error');
-                            }
-                          }}
-                          className="flex-1 bg-[#EF4136] text-white font-black py-2.5 rounded-xl shadow-xs"
-                        >
-                          ບັນທຶກ & ຊິ້ງຂຶ້ນ Cloud ທັນທີ
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            soundSelect();
-                            setCloudDbUrl(DEFAULT_FIREBASE_URL);
-                            pullStateFromCloud(true);
-                            triggerToast('ດຶງຂໍ້ມູນລ່າສຸດຈາກ Firebase ແລ້ວ', 'info');
-                          }}
-                          className="bg-emerald-50 text-emerald-700 border border-emerald-200 font-bold px-3 py-2.5 rounded-xl"
-                        >
-                          ດຶງຂໍ້ມູນລ່າສຸດ
-                        </button>
-                      </div>
-                    </div>
                   </div>
                 )}
 
@@ -2474,7 +2479,7 @@
                         </div>
                         <div>
                           <h3 className="text-sm font-black text-slate-900">ສ້າງບັນຊີ User ໃໝ່ໃຫ້ລູກຄ້າ</h3>
-                          <p className="text-[10px] text-slate-500">ຖ້າເບີໂທມີຢູ່ແລ້ວ ລະບົບຈະອັບເດດລະຫັດຜ່ານໃໝ່ໃຫ້ທັນທີ</p>
+                          <p className="text-[10px] text-slate-500">ຊິ້ງຂຶ້ນ Firebase ທັນທີ • ລູກຄ້າເອົາໄປລ໊ອກອິນເຄື່ອງອື່ນໄດ້ເລີຍ</p>
                         </div>
                       </div>
 
@@ -3385,7 +3390,7 @@
                     <button
                       onClick={() => {
                         soundClick();
-                        pullStateFromCloud(true);
+                        forcePullFromCloud();
                         triggerToast('ອັບເດດຂໍ້ມູນໃບບິນລ່າສຸດແລ້ວ', 'info');
                       }}
                       className="p-1 text-white hover:bg-white/15 rounded-full active:rotate-180 transition"
