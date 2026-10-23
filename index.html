@@ -238,17 +238,16 @@
       { id: 6, name: 'ກຸ້ງ', emoji: '🦐', pastelBg: 'bg-[#FFF4ED]' }
     ];
 
-    // ຕັ້ງຄ່າ Firebase Realtime Database URL ຫຼັກຂອງລະບົບໂດຍອັດຕະໂນມັດ
     const DEFAULT_FIREBASE_URL = 'https://pupatao-6ad11-default-rtdb.asia-southeast1.firebasedatabase.app';
 
     const STORAGE_KEYS = {
-      USERS: 'lao_lrl_users_v25',
-      BETS: 'lao_lrl_bets_v25',
-      TXS: 'lao_lrl_txs_v25',
-      ROUNDS: 'lao_lrl_rounds_v25',
-      CURRENT_ROUND: 'lao_lrl_cur_round_v25',
-      ACTIVE_USER: 'lao_lrl_active_uid_v25',
-      CLOUD_URL: 'lao_lrl_cloud_db_url_v25'
+      USERS: 'lao_lrl_users_v26',
+      BETS: 'lao_lrl_bets_v26',
+      TXS: 'lao_lrl_txs_v26',
+      ROUNDS: 'lao_lrl_rounds_v26',
+      CURRENT_ROUND: 'lao_lrl_cur_round_v26',
+      ACTIVE_USER: 'lao_lrl_active_uid_v26',
+      CLOUD_URL: 'lao_lrl_cloud_db_url_v26'
     };
 
     const INITIAL_USERS = [
@@ -282,16 +281,38 @@
       { roundId: 36260461, winningAnimals: [5, 4, 1], timestamp: '22/10/2026 18:08', totalBetsVol: 1650000 }
     ];
 
-    // ຟັງຊັນລວມຂໍ້ມູນ (Merge) ໂດຍບໍ່ໃຫ້ຂໍ້ມູນຈາກເຄື່ອງອື່ນຕົກເຮ່ຍເສຍຫາຍ
+    // ຟັງຊັນທຳຄວາມສະອາດເບີໂທ (ລຶບຍະຫວ່າງ, ຂີດຕໍ່, ຈ້ຳ ອອກທັງໝົດ ເພື່ອບໍ່ໃຫ້ລ໊ອກອິນຜິດ)
+    const normalizePhone = (val) => String(val || '').replace(/[\s\-._()]/g, '').trim();
+    const normalizePassword = (val) => String(val || '').trim();
+
+    // ລວມຂໍ້ມູນ (Merge) ໂດຍໃຫ້ຂໍ້ມູນໃໝ່ໃນເຄື່ອງ (localArr) ທັບຂໍ້ມູນເກົ່າ ແລະ ຮັກສາຂໍ້ມູນຈາກເຄື່ອງອື່ນໄວ້
     const mergeArraysById = (localArr = [], remoteArr = [], idField = 'id') => {
       const map = new Map();
-      remoteArr.forEach(item => {
-        if (item && item[idField] !== undefined) map.set(item[idField], item);
+      (Array.isArray(remoteArr) ? remoteArr : []).forEach(item => {
+        if (item && item[idField] !== undefined) map.set(String(item[idField]), item);
       });
-      localArr.forEach(item => {
-        if (item && item[idField] !== undefined) map.set(item[idField], item);
+      (Array.isArray(localArr) ? localArr : []).forEach(item => {
+        if (item && item[idField] !== undefined) map.set(String(item[idField]), item);
       });
       return Array.from(map.values());
+    };
+
+    // ລວມລາຍຊື່ Users ທັງຕາມ ID ແລະ ເບີໂທ ເພື່ອປ້ອງກັນບັນຊີຊ້ຳ ຫຼື ລະຫັດຜ່ານເກົ່າທັບລະຫັດໃໝ່
+    const mergeUsersSmart = (localUsers = [], remoteUsers = []) => {
+      const phoneMap = new Map();
+      (Array.isArray(remoteUsers) ? remoteUsers : []).forEach(u => {
+        if (u && u.phone) {
+          const cleanP = normalizePhone(u.phone);
+          phoneMap.set(cleanP, { ...u, phone: cleanP, password: normalizePassword(u.password) });
+        }
+      });
+      (Array.isArray(localUsers) ? localUsers : []).forEach(u => {
+        if (u && u.phone) {
+          const cleanP = normalizePhone(u.phone);
+          phoneMap.set(cleanP, { ...u, phone: cleanP, password: normalizePassword(u.password) });
+        }
+      });
+      return Array.from(phoneMap.values());
     };
 
     function App() {
@@ -308,6 +329,8 @@
       const [authPhone, setAuthPhone] = useState('');
       const [authPassword, setAuthPassword] = useState('');
       const [authName, setAuthName] = useState('');
+      const [showAuthPassword, setShowAuthPassword] = useState(false);
+      const [isSubmittingAuth, setIsSubmittingAuth] = useState(false);
 
       const [playerTab, setPlayerTab] = useState('bet'); // 'bet' | 'live'
       const [adminTab, setAdminTab] = useState('draw'); // 'draw' | 'create_user' | 'users' | 'requests' | 'analytics' | 'admin_live' | 'cloud_sync'
@@ -452,7 +475,7 @@
 
       const triggerToast = (msg, type = 'info') => {
         setToast({ msg, type });
-        setTimeout(() => setToast(null), 3000);
+        setTimeout(() => setToast(null), 3500);
       };
 
       // ==================== SAFE IMMEDIATE STORAGE & FIREBASE REALTIME SYNC ====================
@@ -463,7 +486,7 @@
         return target.endsWith('.json') ? target : `${target}/lrl_game_state.json`;
       };
 
-      const saveImmediate = (override = {}) => {
+      const saveImmediate = async (override = {}) => {
         lastLocalActionRef.current = Date.now();
         if (override.users !== undefined) {
           localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(override.users));
@@ -485,19 +508,21 @@
           localStorage.setItem(STORAGE_KEYS.CURRENT_ROUND, JSON.stringify(override.currentRound));
           setCurrentRound(override.currentRound);
         }
-        notifySync(override);
+        try {
+          broadcastRef.current?.postMessage({ type: 'SYNC' });
+        } catch (e) {}
+        return await pushStateToCloud(override);
       };
 
       const pushStateToCloud = async (overrideData = {}) => {
         const activeUrl = cloudDbUrl || DEFAULT_FIREBASE_URL;
-        if (!activeUrl) return;
+        if (!activeUrl) return false;
         try {
           const endpoint = getFirebaseEndpoint(activeUrl);
 
-          // ດຶງຂໍ້ມູນລ່າສຸດຈາກ Cloud ມາລວມກ່ອນບັນທຶກ ເພື່ອບໍ່ໃຫ້ທັບຂໍ້ມູນຂອງເຄື່ອງອື່ນ
           let remoteData = null;
           try {
-            const getRes = await fetch(endpoint);
+            const getRes = await fetch(endpoint, { cache: 'no-store' });
             if (getRes.ok) {
               remoteData = await getRes.json();
             }
@@ -509,10 +534,14 @@
           const localRounds = overrideData.roundsHistory !== undefined ? overrideData.roundsHistory : roundsHistory;
           const localCurRound = overrideData.currentRound !== undefined ? overrideData.currentRound : currentRound;
 
-          const mergedUsers = remoteData?.users ? mergeArraysById(localUsers, remoteData.users, 'id') : localUsers;
+          const mergedUsers = remoteData?.users ? mergeUsersSmart(localUsers, remoteData.users) : localUsers;
           const mergedBets = remoteData?.bets ? mergeArraysById(localBets, remoteData.bets, 'id') : localBets;
           const mergedTxs = remoteData?.transactions ? mergeArraysById(localTxs, remoteData.transactions, 'id') : localTxs;
           const mergedRounds = remoteData?.roundsHistory ? mergeArraysById(localRounds, remoteData.roundsHistory, 'roundId') : localRounds;
+
+          // ອັບເດດ localStorage ດ້ວຍຂໍ້ມູນທີ່ລວມກັນແລ້ວ
+          localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(mergedUsers));
+          setUsers(mergedUsers);
 
           const payload = {
             users: mergedUsers,
@@ -531,34 +560,42 @@
 
           if (!putRes.ok) throw new Error('PUT failed');
           setCloudStatus('connected');
+          return true;
         } catch (err) {
           setCloudStatus('error');
+          return false;
         }
       };
 
       const pullStateFromCloud = async (force = false) => {
         const activeUrl = cloudDbUrl || DEFAULT_FIREBASE_URL;
-        if (!activeUrl) return;
-        if (!force && Date.now() - lastLocalActionRef.current < 2500) return;
+        if (!activeUrl) return null;
+        if (!force && Date.now() - lastLocalActionRef.current < 3500) return null;
 
         try {
           const endpoint = getFirebaseEndpoint(activeUrl);
-          const res = await fetch(endpoint);
+          const res = await fetch(endpoint, { cache: 'no-store' });
           if (!res.ok) throw new Error('Sync failed');
           const data = await res.json();
 
           if (data) {
             if (Array.isArray(data.users) && data.users.length > 0) {
-              setUsers(data.users);
-              localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(data.users));
+              const localU = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
+              const combinedUsers = mergeUsersSmart(localU, data.users);
+              setUsers(combinedUsers);
+              localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(combinedUsers));
             }
             if (Array.isArray(data.bets)) {
-              setBets(data.bets);
-              localStorage.setItem(STORAGE_KEYS.BETS, JSON.stringify(data.bets));
+              const localB = JSON.parse(localStorage.getItem(STORAGE_KEYS.BETS) || '[]');
+              const combinedBets = mergeArraysById(localB, data.bets, 'id');
+              setBets(combinedBets);
+              localStorage.setItem(STORAGE_KEYS.BETS, JSON.stringify(combinedBets));
             }
             if (Array.isArray(data.transactions)) {
-              setTransactions(data.transactions);
-              localStorage.setItem(STORAGE_KEYS.TXS, JSON.stringify(data.transactions));
+              const localT = JSON.parse(localStorage.getItem(STORAGE_KEYS.TXS) || '[]');
+              const combinedTxs = mergeArraysById(localT, data.transactions, 'id');
+              setTransactions(combinedTxs);
+              localStorage.setItem(STORAGE_KEYS.TXS, JSON.stringify(combinedTxs));
             }
             if (Array.isArray(data.roundsHistory) && data.roundsHistory.length > 0) {
               setRoundsHistory(data.roundsHistory);
@@ -574,24 +611,26 @@
                 return nextRoundState;
               });
             }
+            setCloudStatus('connected');
+            return data;
           } else {
-            // ຖ້າ Firebase ຍັງຫວ່າງເປົ່າ (ເປີດຄັ້ງທຳອິດ) ໃຫ້ອັບໂຫຼດຂໍ້ມູນເລີ່ມຕົ້ນຂຶ້ນທັນທີ
             await pushStateToCloud();
+            setCloudStatus('connected');
+            return null;
           }
-          setCloudStatus('connected');
         } catch (err) {
           setCloudStatus('error');
+          return null;
         }
       };
 
-      // ດຶງຂໍ້ມູນຈາກ Firebase ທັນທີເມື່ອເປີດເວັບໄຊ
       useEffect(() => {
         pullStateFromCloud(true);
       }, []);
 
       useEffect(() => {
         try {
-          broadcastRef.current = new BroadcastChannel('lao_lrl_sync_v25');
+          broadcastRef.current = new BroadcastChannel('lao_lrl_sync_v26');
           broadcastRef.current.onmessage = (event) => {
             if (event.data?.type === 'SYNC') loadStorageData();
           };
@@ -609,13 +648,6 @@
           window.removeEventListener('storage', handleStorageEvent);
         };
       }, []);
-
-      const notifySync = (overrideData = {}) => {
-        try {
-          broadcastRef.current?.postMessage({ type: 'SYNC' });
-        } catch (e) {}
-        pushStateToCloud(overrideData);
-      };
 
       const loadStorageData = () => {
         const u = localStorage.getItem(STORAGE_KEYS.USERS);
@@ -636,12 +668,11 @@
       useEffect(() => { localStorage.setItem(STORAGE_KEYS.ACTIVE_USER, activeUserId); }, [activeUserId]);
       useEffect(() => { localStorage.setItem(STORAGE_KEYS.CLOUD_URL, cloudDbUrl); }, [cloudDbUrl]);
 
-      // ໂຕຈັບເວລາ & Sync ຂໍ້ມູນຈາກ Firebase ທຸກໆ 2 ວິນາທີ
       useEffect(() => {
         let tickCount = 0;
         const timerId = setInterval(() => {
           tickCount += 1;
-          if (tickCount % 2 === 0) {
+          if (tickCount % 3 === 0) {
             pullStateFromCloud(false);
           }
           setCurrentRound(prev => {
@@ -689,51 +720,74 @@
         triggerToast('ປິດກ້ອງໄລສົດແລ້ວ', 'info');
       };
 
+      // ==================== ແກ້ໄຂລະບົບກວດສອບ Login ໃຫ້ແม่ນຢຳ 100% ====================
       const handleLoginSubmit = async (e) => {
         e.preventDefault();
         soundClick();
-        const phone = authPhone.trim();
-        const pwd = authPassword.trim();
-        if (!phone || !pwd) {
+        const inputPhone = normalizePhone(authPhone);
+        const inputPwd = normalizePassword(authPassword);
+
+        if (!inputPhone || !inputPwd) {
           triggerToast('ກະລຸນາປ້ອນເບີໂທ ແລະ ລະຫັດຜ່ານ', 'error');
           return;
         }
 
-        // ດຶງຂໍ້ມູນລ່າສຸດຈາກ Cloud ກ່ອນກວດສອບລ໊ອກອິນ ເພື່ອຮອງຮັບ User ທີ່ແອັດມິນຫາກໍສ້າງຈາກເຄື່ອງອື່ນ
-        let latestUsers = users;
+        setIsSubmittingAuth(true);
+
+        // 1. ລວມຂໍ້ມູນ Users ໃນເຄື່ອງ ແລະ ດຶງຂໍ້ມູນລ່າສຸດຈາກ Firebase ມາໂຮມກັນກ່ອນກວດສອບ
+        const localSavedUsers = JSON.parse(localStorage.getItem(STORAGE_KEYS.USERS) || '[]');
+        let latestUsers = mergeUsersSmart(users, localSavedUsers);
+
         try {
-          const res = await fetch(getFirebaseEndpoint(cloudDbUrl));
+          const res = await fetch(getFirebaseEndpoint(cloudDbUrl), { cache: 'no-store' });
           if (res.ok) {
             const cloudData = await res.json();
             if (Array.isArray(cloudData?.users)) {
-              latestUsers = mergeArraysById(users, cloudData.users, 'id');
+              latestUsers = mergeUsersSmart(latestUsers, cloudData.users);
               setUsers(latestUsers);
               localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(latestUsers));
             }
           }
         } catch (err) {}
 
-        const found = latestUsers.find(u => u.phone === phone && u.password === pwd);
-        if (!found) {
-          triggerToast('ເບີໂທ ຫຼື ລະຫັດຜ່ານບໍ່ຖືກຕ້ອງ!', 'error');
+        setIsSubmittingAuth(false);
+
+        // 2. ຄົ້ນຫາບັນຊີດ້ວຍເບີໂທທີ່ທຳຄວາມສະອາດແລ້ວ (ຮອງຮັບທັງກໍລະນີລືມປ້ອນເລກ 0 ທາງໜ້າ)
+        const foundByPhone = latestUsers.find(u => {
+          const dbPhone = normalizePhone(u.phone);
+          return (
+            dbPhone === inputPhone ||
+            dbPhone === '0' + inputPhone ||
+            '0' + dbPhone === inputPhone
+          );
+        });
+
+        if (!foundByPhone) {
+          triggerToast(`ບໍ່ພົບເບີໂທ ${inputPhone} ໃນລະບົບ! ກະລຸນາກວດສອບເບີໂທຄືນ`, 'error');
           return;
         }
-        if (found.status === 'suspended') {
+
+        if (normalizePassword(foundByPhone.password) !== inputPwd) {
+          triggerToast('ລະຫັດຜ່ານບໍ່ຖືກຕ້ອງ! (ກົດຮູບຕາ 👁️ ເພື່ອກວດເບິ່ງລະຫັດທີ່ພິມ)', 'error');
+          return;
+        }
+
+        if (foundByPhone.status === 'suspended') {
           triggerToast('ບັນຊີຂອງທ່ານຖືກລະງັບການໃຊ້ງານຊົ່ວຄາວ!', 'error');
           return;
         }
 
-        setActiveUserId(found.id);
+        setActiveUserId(foundByPhone.id);
         setAppAccessMode('player');
-        triggerToast(`ຍິນດີຕ້ອນຮັບທ່ານ ${found.name}`, 'success');
+        triggerToast(`ຍິນດີຕ້ອນຮັບທ່ານ ${foundByPhone.name}`, 'success');
         soundFanfare();
       };
 
-      const handleRegisterSubmit = (e) => {
+      const handleRegisterSubmit = async (e) => {
         e.preventDefault();
         soundClick();
-        const phone = authPhone.trim();
-        const pwd = authPassword.trim();
+        const phone = normalizePhone(authPhone);
+        const pwd = normalizePassword(authPassword);
         const name = authName.trim();
 
         if (!phone || !pwd || !name) {
@@ -741,9 +795,24 @@
           return;
         }
 
-        const exists = users.find(u => u.phone === phone);
+        setIsSubmittingAuth(true);
+
+        // ດຶງຂໍ້ມູນລ່າສຸດຈາກ Cloud ກ່ອນກວດສອບເບີໂທຊ້ຳ
+        let latestUsers = users;
+        try {
+          const res = await fetch(getFirebaseEndpoint(cloudDbUrl), { cache: 'no-store' });
+          if (res.ok) {
+            const cloudData = await res.json();
+            if (Array.isArray(cloudData?.users)) {
+              latestUsers = mergeUsersSmart(users, cloudData.users);
+            }
+          }
+        } catch (err) {}
+
+        const exists = latestUsers.find(u => normalizePhone(u.phone) === phone);
         if (exists) {
-          triggerToast('❌ ເບີໂທລະສັບນີ້ໄດ້ລົງທະບຽນແລ້ວ! ບໍ່ສາມາດໃຊ້ຊ້ຳໄດ້', 'error');
+          setIsSubmittingAuth(false);
+          triggerToast('❌ ເບີໂທລະສັບນີ້ໄດ້ລົງທະບຽນແລ້ວ! ກະລຸນາເຂົ້າສູ່ລະບົບ', 'error');
           return;
         }
 
@@ -761,8 +830,9 @@
           createdAt: new Date().toISOString().replace('T', ' ').substring(0, 16)
         };
 
-        const updatedUsers = [newUser, ...users];
-        saveImmediate({ users: updatedUsers });
+        const updatedUsers = [newUser, ...latestUsers];
+        await saveImmediate({ users: updatedUsers });
+        setIsSubmittingAuth(false);
         setActiveUserId(newUser.id);
         setAppAccessMode('player');
         triggerToast(`ລົງທະບຽນສຳເລັດ! ຍິນດີຕ້ອນຮັບ ${name}`, 'success');
@@ -772,7 +842,8 @@
       const handleAdminLogin = (e) => {
         e.preventDefault();
         soundClick();
-        if (authPassword.trim() === 'admin888' || authPassword.trim() === '1234' || authPassword.trim() === 'admin') {
+        const cleanAdminPass = normalizePassword(authPassword);
+        if (cleanAdminPass === 'admin888' || cleanAdminPass === '1234' || cleanAdminPass === 'admin') {
           setAppAccessMode('admin');
           pullStateFromCloud(true);
           triggerToast('ເຂົ້າສູ່ລະບົບແອັດມິນສຳເລັດ', 'success');
@@ -782,43 +853,73 @@
         }
       };
 
-      const handleAdminAddUser = (e) => {
+      // ==================== ແກ້ໄຂການສ້າງ User ຈາກແອັດມິນໃຫ້ບັນທຶກຂຶ້ນ Cloud 100% ====================
+      const handleAdminAddUser = async (e) => {
         e.preventDefault();
         soundClick();
-        const phone = newUserForm.phone.trim();
-        if (!phone || !newUserForm.name.trim()) {
+        const phone = normalizePhone(newUserForm.phone);
+        const pwd = normalizePassword(newUserForm.password) || '123456';
+        const name = newUserForm.name.trim();
+
+        if (!phone || !name) {
           triggerToast('ກະລຸນາປ້ອນຊື່ ແລະ ເບີໂທລູກຄ້າໃຫ້ຄົບຖ້ວນ', 'error');
           return;
         }
 
-        const exists = users.find(u => u.phone === phone);
-        if (exists) {
-          triggerToast(`❌ ເບີໂທ ${phone} ມີໃນຖານຂໍ້ມູນແລ້ວ! ບໍ່ສາມາດສ້າງຊ້ຳໄດ້`, 'error');
-          return;
-        }
+        setIsSubmittingAuth(true);
+
+        // ດຶງລາຍຊື່ລ່າສຸດຈາກ Cloud ມາລວມກ່ອນ
+        let currentList = users;
+        try {
+          const res = await fetch(getFirebaseEndpoint(cloudDbUrl), { cache: 'no-store' });
+          if (res.ok) {
+            const cloudData = await res.json();
+            if (Array.isArray(cloudData?.users)) {
+              currentList = mergeUsersSmart(users, cloudData.users);
+            }
+          }
+        } catch (err) {}
 
         const initBal = Number(newUserForm.initialBalance) || 0;
-        const pwd = newUserForm.password.trim() || '123456';
-        const createdUser = {
-          id: 'USR-' + Math.floor(100 + Math.random() * 900) + '-' + Date.now().toString().slice(-3),
-          phone,
-          name: newUserForm.name.trim(),
-          password: pwd,
-          balance: initBal,
-          totalDeposited: initBal,
-          totalWithdrawn: 0,
-          totalBet: 0,
-          totalWon: 0,
-          bankName: newUserForm.bankName || 'BCEL One',
-          bankAccount: newUserForm.bankAccount?.trim() || '',
-          adminNote: newUserForm.adminNote?.trim() || '',
-          status: 'active',
-          createdAt: new Date().toISOString().replace('T', ' ').substring(0, 16)
-        };
+        const existingUser = currentList.find(u => normalizePhone(u.phone) === phone);
 
-        const updatedUsers = [createdUser, ...users];
-        saveImmediate({ users: updatedUsers });
-        setCreatedUserCard(createdUser);
+        let targetUser;
+        let updatedUsers;
+
+        if (existingUser) {
+          // ຖ້າເບີໂທນີ້ມີຢູ່ແລ້ວ ໃຫ້ອັບເດດລະຫັດຜ່ານໃໝ່ ແລະ ຍອດເງິນທັນທີ ເພື່ອໃຫ້ລູກຄ້າລ໊ອກອິນໄດ້ເລີຍ
+          targetUser = {
+            ...existingUser,
+            name,
+            phone,
+            password: pwd,
+            balance: initBal,
+            status: 'active'
+          };
+          updatedUsers = currentList.map(u => normalizePhone(u.phone) === phone ? targetUser : u);
+        } else {
+          targetUser = {
+            id: 'USR-' + Math.floor(100 + Math.random() * 900) + '-' + Date.now().toString().slice(-3),
+            phone,
+            name,
+            password: pwd,
+            balance: initBal,
+            totalDeposited: initBal,
+            totalWithdrawn: 0,
+            totalBet: 0,
+            totalWon: 0,
+            bankName: newUserForm.bankName || 'BCEL One',
+            bankAccount: newUserForm.bankAccount?.trim() || '',
+            adminNote: newUserForm.adminNote?.trim() || '',
+            status: 'active',
+            createdAt: new Date().toISOString().replace('T', ' ').substring(0, 16)
+          };
+          updatedUsers = [targetUser, ...currentList];
+        }
+
+        const cloudOk = await saveImmediate({ users: updatedUsers });
+        setIsSubmittingAuth(false);
+        setCreatedUserCard(targetUser);
         setNewUserForm({
           phone: '',
           name: '',
@@ -829,7 +930,12 @@
           adminNote: ''
         });
         soundFanfare();
-        triggerToast(`ສ້າງບັນຊີລູກຄ້າ ${createdUser.name} ສຳເລັດ!`, 'success');
+
+        if (cloudOk) {
+          triggerToast(`ບັນທຶກບັນຊີ ${targetUser.name} ຂຶ້ນ Cloud ສຳເລັດ! ລ໊ອກອິນໄດ້ທັນທີ`, 'success');
+        } else {
+          triggerToast(`ບັນທຶກໃນເຄື່ອງສຳເລັດ (ກະລຸນາກວດສອບ Rules ໃນ Firebase ຖ້າຈະລ໊ອກອິນຂ້າມເຄື່ອງ)`, 'info');
+        }
       };
 
       const copyToClipboard = (text, label = 'ກ໊ອບປີ້ຂໍ້ມູນສຳເລັດ!') => {
@@ -1318,7 +1424,7 @@
       }, [currentRoundBets, analyticsSortAsc]);
 
       const mySlipsSummary = useMemo(() => {
-        const myBets = bets.filter(b => !currentUser || b.userId === currentUser.id);
+        const myBets = bets.filter(b => !currentUser || b.userId === currentUser.id || normalizePhone(b.userPhone) === normalizePhone(currentUser?.phone));
         const totalSpent = myBets.reduce((s, b) => s + (b.amount || 0), 0);
         const totalWon = myBets.reduce((s, b) => s + (b.actualWin || 0), 0);
         const wonCount = myBets.filter(b => b.status === 'won').length;
@@ -1334,7 +1440,7 @@
       const filteredUsers = useMemo(() => {
         const q = userSearchQuery.trim().toLowerCase();
         if (!q) return users;
-        return users.filter(u => u.name.toLowerCase().includes(q) || u.phone.includes(q));
+        return users.filter(u => u.name.toLowerCase().includes(q) || normalizePhone(u.phone).includes(q));
       }, [users, userSearchQuery]);
 
       const fmt = (num) => Number(num || 0).toLocaleString('en-US');
@@ -1365,7 +1471,7 @@
       return (
         <div className="min-h-screen bg-[#FFF5F5] text-slate-900 flex justify-center selection:bg-[#EF4136] selection:text-white">
           {toast && (
-            <div className={`fixed top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2 text-xs font-extrabold animate-bounce border ${
+            <div className={`fixed top-14 left-1/2 -translate-x-1/2 z-50 px-4 py-2.5 rounded-2xl shadow-2xl flex items-center gap-2 text-xs font-extrabold animate-bounce border max-w-xs text-center ${
               toast.type === 'error' ? 'bg-[#EF4136] text-white border-red-800' :
               toast.type === 'success' ? 'bg-[#DC2626] text-white border-white/40' :
               'bg-white text-[#EF4136] border-red-200'
@@ -1454,21 +1560,32 @@
 
                       <div>
                         <label className="text-slate-700 font-bold block mb-1">ລະຫັດຜ່ານ:</label>
-                        <input
-                          type="password"
-                          required
-                          placeholder="••••••"
-                          value={authPassword}
-                          onChange={(e) => setAuthPassword(e.target.value)}
-                          className="w-full bg-slate-50 border border-red-200 rounded-2xl px-3.5 py-3 text-slate-900 font-num font-bold focus:border-[#EF4136] focus:outline-none"
-                        />
+                        <div className="relative">
+                          <input
+                            type={showAuthPassword ? 'text' : 'password'}
+                            required
+                            placeholder="••••••"
+                            value={authPassword}
+                            onChange={(e) => setAuthPassword(e.target.value)}
+                            className="w-full bg-slate-50 border border-red-200 rounded-2xl px-3.5 py-3 pr-10 text-slate-900 font-num font-bold focus:border-[#EF4136] focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowAuthPassword(!showAuthPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#EF4136] p-1"
+                            title="ສະແດງ/ເຊື່ອງລະຫັດຜ່ານ"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
 
                       <button
                         type="submit"
-                        className="w-full bg-[#EF4136] hover:bg-[#DC2626] text-white font-black py-3.5 rounded-2xl shadow-md transition active:scale-95 text-sm"
+                        disabled={isSubmittingAuth}
+                        className="w-full bg-[#EF4136] hover:bg-[#DC2626] disabled:opacity-60 text-white font-black py-3.5 rounded-2xl shadow-md transition active:scale-95 text-sm"
                       >
-                        ເຂົ້າສູ່ລະບົບລູກຄ້າ
+                        {isSubmittingAuth ? 'ກຳລັງກວດສອບຂໍ້ມູນ...' : 'ເຂົ້າສູ່ລະບົບລູກຄ້າ'}
                       </button>
                     </form>
                   ) : authViewMode === 'register' && !isAdminPortal ? (
@@ -1499,35 +1616,54 @@
 
                       <div>
                         <label className="text-slate-700 font-bold block mb-1">ລະຫັດຜ່ານ:</label>
-                        <input
-                          type="password"
-                          required
-                          placeholder="••••••"
-                          value={authPassword}
-                          onChange={(e) => setAuthPassword(e.target.value)}
-                          className="w-full bg-slate-50 border border-red-200 rounded-2xl px-3.5 py-2.5 text-slate-900 font-num font-bold focus:border-[#EF4136] focus:outline-none"
-                        />
+                        <div className="relative">
+                          <input
+                            type={showAuthPassword ? 'text' : 'password'}
+                            required
+                            placeholder="••••••"
+                            value={authPassword}
+                            onChange={(e) => setAuthPassword(e.target.value)}
+                            className="w-full bg-slate-50 border border-red-200 rounded-2xl px-3.5 py-2.5 pr-10 text-slate-900 font-num font-bold focus:border-[#EF4136] focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowAuthPassword(!showAuthPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-[#EF4136] p-1"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
 
                       <button
                         type="submit"
-                        className="w-full bg-[#EF4136] hover:bg-[#DC2626] text-white font-black py-3.5 rounded-2xl shadow-md transition active:scale-95 text-sm"
+                        disabled={isSubmittingAuth}
+                        className="w-full bg-[#EF4136] hover:bg-[#DC2626] disabled:opacity-60 text-white font-black py-3.5 rounded-2xl shadow-md transition active:scale-95 text-sm"
                       >
-                        ລົງທະບຽນບັນຊີໃໝ່ (+50,000 ₭)
+                        {isSubmittingAuth ? 'ກຳລັງສ້າງບັນຊີ...' : 'ລົງທະບຽນບັນຊີໃໝ່ (+50,000 ₭)'}
                       </button>
                     </form>
                   ) : (
                     <form onSubmit={handleAdminLogin} className="space-y-3.5 text-xs">
                       <div>
                         <label className="text-slate-700 font-bold block mb-1">ລະຫັດຜ່ານແອັດມິນ:</label>
-                        <input
-                          type="password"
-                          required
-                          placeholder="••••••••"
-                          value={authPassword}
-                          onChange={(e) => setAuthPassword(e.target.value)}
-                          className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-3 text-slate-900 font-num font-bold focus:border-slate-900 focus:outline-none"
-                        />
+                        <div className="relative">
+                          <input
+                            type={showAuthPassword ? 'text' : 'password'}
+                            required
+                            placeholder="••••••••"
+                            value={authPassword}
+                            onChange={(e) => setAuthPassword(e.target.value)}
+                            className="w-full bg-slate-50 border border-slate-200 rounded-2xl px-3.5 py-3 pr-10 text-slate-900 font-num font-bold focus:border-slate-900 focus:outline-none"
+                          />
+                          <button
+                            type="button"
+                            onClick={() => setShowAuthPassword(!showAuthPassword)}
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-700 p-1"
+                          >
+                            <Eye className="w-4 h-4" />
+                          </button>
+                        </div>
                       </div>
 
                       <button
@@ -2274,14 +2410,14 @@
                     <div className="bg-white border border-red-200 rounded-3xl p-4 shadow-xs space-y-3 text-xs">
                       <div className="flex justify-between items-center border-b border-red-100 pb-2">
                         <div>
-                          <h4 className="font-black text-sm text-slate-900">☁️ ຖານຂໍ້ມູນອອນລາຍ Firebase (ເຊື່ອມຕໍ່ແລ້ວ)</h4>
+                          <h4 className="font-black text-sm text-slate-900">☁️ ຖານຂໍ້ມູນອອນລາຍ Firebase</h4>
                           <p className="text-[10px] text-slate-500">ທຸກເຄື່ອງທີ່ເປີດເວັບນີ້ຈະຊິ້ງຂໍ້ມູນເຂົ້າກັນໂດຍອັດຕະໂນມັດ</p>
                         </div>
                         <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold ${
                           cloudStatus === 'connected' ? 'bg-emerald-100 text-emerald-700' :
                           cloudStatus === 'error' ? 'bg-red-100 text-[#EF4136]' : 'bg-slate-100 text-slate-600'
                         }`}>
-                          {cloudStatus === 'connected' ? '● ອອນລາຍສົດ' : cloudStatus === 'error' ? '✕ ເຊື່ອມຕໍ່ຜິດພາດ' : '○ ໂໝດໃນເຄື່ອງ'}
+                          {cloudStatus === 'connected' ? '● ອອນລາຍສົດ' : cloudStatus === 'error' ? '✕ ຕິດສິດ Rules ໃນ Firebase' : '○ ໂໝດໃນເຄື່ອງ'}
                         </span>
                       </div>
 
@@ -2299,10 +2435,14 @@
                       <div className="flex gap-2">
                         <button
                           type="button"
-                          onClick={() => {
+                          onClick={async () => {
                             soundSelect();
-                            pushStateToCloud();
-                            triggerToast('ບັນທຶກ ແລະ ອັບໂຫຼດຂໍ້ມູນຂຶ້ນ Firebase Cloud ແລ້ວ!', 'success');
+                            const ok = await pushStateToCloud();
+                            if (ok) {
+                              triggerToast('ບັນທຶກ ແລະ ອັບໂຫຼດຂໍ້ມູນຂຶ້ນ Firebase Cloud ແລ້ວ!', 'success');
+                            } else {
+                              triggerToast('ບໍ່ສາມາດຂຽນລົງ Firebase ໄດ້! ກະລຸນາເປີດ Rules .write: true ໃນ Firebase Console', 'error');
+                            }
                           }}
                           className="flex-1 bg-[#EF4136] text-white font-black py-2.5 rounded-xl shadow-xs"
                         >
@@ -2334,7 +2474,7 @@
                         </div>
                         <div>
                           <h3 className="text-sm font-black text-slate-900">ສ້າງບັນຊີ User ໃໝ່ໃຫ້ລູກຄ້າ</h3>
-                          <p className="text-[10px] text-slate-500">ກວດສອບເບີໂທຊ້ຳອັດຕະໂນມັດ • ພ້ອມສົ່ງລະຫັດທາງ LINE</p>
+                          <p className="text-[10px] text-slate-500">ຖ້າເບີໂທມີຢູ່ແລ້ວ ລະບົບຈະອັບເດດລະຫັດຜ່ານໃໝ່ໃຫ້ທັນທີ</p>
                         </div>
                       </div>
 
@@ -2352,7 +2492,7 @@
                         </div>
 
                         <div>
-                          <label className="text-slate-700 font-bold block mb-1">2. ເບີໂທລະສັບ (User ເຂົ້າລະບົບ - ຫ້າມຊ້ຳ) *</label>
+                          <label className="text-slate-700 font-bold block mb-1">2. ເບີໂທລະສັບ (User ເຂົ້າລະບົບ) *</label>
                           <input
                             type="tel"
                             required
@@ -2401,10 +2541,11 @@
 
                         <button
                           type="submit"
-                          className="w-full bg-gradient-to-r from-[#EF4136] to-[#DC2626] text-white font-black py-3 rounded-2xl shadow-md transition active:scale-95 flex items-center justify-center gap-1.5 text-xs"
+                          disabled={isSubmittingAuth}
+                          className="w-full bg-gradient-to-r from-[#EF4136] to-[#DC2626] disabled:opacity-60 text-white font-black py-3 rounded-2xl shadow-md transition active:scale-95 flex items-center justify-center gap-1.5 text-xs"
                         >
                           <UserCheck className="w-4 h-4" />
-                          <span>ບັນທຶກ ແລະ ສ້າງບັນຊີລູກຄ້າທັນທີ</span>
+                          <span>{isSubmittingAuth ? 'ກຳລັງບັນທຶກຂຶ້ນ Cloud...' : 'ບັນທຶກ ແລະ ສ້າງບັນຊີລູກຄ້າທັນທີ'}</span>
                         </button>
                       </form>
                     </div>
@@ -2414,7 +2555,7 @@
                         <div className="flex justify-between items-center">
                           <span className="text-xs font-black text-[#EF4136] flex items-center gap-1.5">
                             <CheckCircle className="w-4 h-4" />
-                            <span>ສ້າງບັນຊີສຳເລັດ! ພ້ອມສົ່ງໃຫ້ລູກຄ້າ</span>
+                            <span>ສ້າງບັນຊີສຳເລັດ! ພ້ອມໃຊ້ງານທັນທີ</span>
                           </span>
                           <button onClick={() => setCreatedUserCard(null)} className="text-slate-400 hover:text-slate-700 text-xs">✕</button>
                         </div>
@@ -2428,16 +2569,30 @@
                           <div>🌐 ລິ້ງເຂົ້າຫຼິ້ນ: <strong className="font-num text-emerald-700">{playerShareUrl}</strong></div>
                         </div>
 
-                        <button
-                          onClick={() => {
-                            const msg = `🎲 ປູປາເຕົ້າ ລວຍ ລວຍ ລວຍ\n✅ ບັນຊີຂອງທ່ານພ້ອມໃຊ້ງານແລ້ວ!\n🌐 ລິ້ງເຂົ້າຫຼິ້ນ: ${playerShareUrl}\n👤 ຊື່: ${createdUserCard.name}\n📱 User: ${createdUserCard.phone}\n🔑 ລະຫັດຜ່ານ: ${createdUserCard.password}\n💰 ຍອດເງິນ: ${fmt(createdUserCard.balance)} ₭`;
-                            copyToClipboard(msg, 'ກ໊ອບປີ້ User & ລິ້ງເຂົ້າຫຼິ້ນແລ້ວ!');
-                          }}
-                          className="w-full bg-[#EF4136] text-white font-black py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow"
-                        >
-                          <Copy className="w-3.5 h-3.5" />
-                          <span>ກ໊ອບປີ້ຂໍ້ມູນ + ລິ້ງເຂົ້າຫຼິ້ນສົ່ງທາງ LINE</span>
-                        </button>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => {
+                              const msg = `🎲 ປູປາເຕົ້າ ລວຍ ລວຍ ລວຍ\n✅ ບັນຊີຂອງທ່ານພ້ອມໃຊ້ງານແລ້ວ!\n🌐 ລິ້ງເຂົ້າຫຼິ້ນ: ${playerShareUrl}\n👤 ຊື່: ${createdUserCard.name}\n📱 User: ${createdUserCard.phone}\n🔑 ລະຫັດຜ່ານ: ${createdUserCard.password}\n💰 ຍອດເງິນ: ${fmt(createdUserCard.balance)} ₭`;
+                              copyToClipboard(msg, 'ກ໊ອບປີ້ User & ລິ້ງເຂົ້າຫຼິ້ນແລ້ວ!');
+                            }}
+                            className="flex-1 bg-[#EF4136] text-white font-black py-2.5 rounded-xl text-xs flex items-center justify-center gap-1.5 shadow"
+                          >
+                            <Copy className="w-3.5 h-3.5" />
+                            <span>ກ໊ອບປີ້ສົ່ງທາງ LINE</span>
+                          </button>
+
+                          <button
+                            onClick={() => {
+                              soundSelect();
+                              setActiveUserId(createdUserCard.id);
+                              setAppAccessMode('player');
+                              triggerToast(`ທົດສອບເຂົ້າລະບົບໃນຊື່ ${createdUserCard.name}`, 'success');
+                            }}
+                            className="bg-emerald-600 text-white font-black px-3 py-2.5 rounded-xl text-xs shadow"
+                          >
+                            ທົດສອບເຂົ້າຫຼິ້ນເລີຍ
+                          </button>
+                        </div>
                       </div>
                     )}
                   </div>
