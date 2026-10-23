@@ -257,12 +257,12 @@
     ];
 
     const STORAGE_KEYS = {
-      USERS: 'lao_lrl_users_v27',
-      BETS: 'lao_lrl_bets_v27',
-      TXS: 'lao_lrl_txs_v27',
-      ROUNDS: 'lao_lrl_rounds_v27',
-      CURRENT_ROUND: 'lao_lrl_cur_round_v27',
-      ACTIVE_USER: 'lao_lrl_active_uid_v27'
+      USERS: 'lao_lrl_users_v28',
+      BETS: 'lao_lrl_bets_v28',
+      TXS: 'lao_lrl_txs_v28',
+      ROUNDS: 'lao_lrl_rounds_v28',
+      CURRENT_ROUND: 'lao_lrl_cur_round_v28',
+      ACTIVE_USER: 'lao_lrl_active_uid_v28'
     };
 
     const INITIAL_USERS = [
@@ -296,10 +296,15 @@
       { roundId: 36260461, winningAnimals: [5, 4, 1], timestamp: '22/10/2026 18:08', totalBetsVol: 1650000 }
     ];
 
+    const INITIAL_CHATS = [
+      { id: 1, user: 'XXXXX534', text: 'ເຕົ້າແດງໆ ງວດນີ້', time: '20:56' },
+      { id: 2, user: 'XXXXX770', text: 'ໃຫ້ຖືກແດ່ເດີ້ ລວຍໆ', time: '20:56' },
+      { id: 3, user: 'XXXXX241', text: 'ປູຊໍ້າແນ່ນອນ', time: '20:57' }
+    ];
+
     const normalizePhone = (val) => String(val || '').replace(/[\s\-._()]/g, '').trim();
     const normalizePassword = (val) => String(val || '').trim();
 
-    // ແປງ Object ຈາກ Firebase ກັບມາເປັນ Array ສະເໝີ
     const toArray = (val) => {
       if (!val) return [];
       if (Array.isArray(val)) return val.filter(Boolean);
@@ -357,7 +362,7 @@
       const [soundEnabled] = useState(true);
       const [selectedDateFilter] = useState('23/10/2026');
 
-      const [cloudStatus, setCloudStatus] = useState('connecting'); // 'connecting' | 'connected' | 'permission_denied' | 'error'
+      const [cloudStatus, setCloudStatus] = useState('connecting');
       const [cloudErrorDetail, setCloudErrorDetail] = useState('');
 
       const [users, setUsers] = useState(() => {
@@ -435,27 +440,37 @@
       const [createdUserCard, setCreatedUserCard] = useState(null);
       const [analyticsSortAsc, setAnalyticsSortAsc] = useState(false);
 
-      const [chatMessages, setChatMessages] = useState([
-        { id: 1, user: 'XXXXX534', text: 'ເຕົ້າແດງໆ ງວດນີ້', time: '20:56' },
-        { id: 2, user: 'XXXXX770', text: 'ໃຫ້ຖືກແດ່ເດີ້ ລວຍໆ', time: '20:56' },
-        { id: 3, user: 'XXXXX241', text: 'ປູຊໍ້າແນ່ນອນ', time: '20:57' }
-      ]);
+      const [chatMessages, setChatMessages] = useState(INITIAL_CHATS);
       const [chatInput, setChatInput] = useState('');
       const chatScrollRef = useRef(null);
 
+      // ==================== LIVE STREAM BROADCAST STATES (ADMIN -> PLAYER) ====================
       const adminVideoRef = useRef(null);
+      const captureCanvasRef = useRef(null);
+      const broadcastIntervalRef = useRef(null);
       const [isAdminCameraActive, setIsAdminCameraActive] = useState(false);
+      const [cameraFacingMode, setCameraFacingMode] = useState('environment'); // 'user' | 'environment'
       const [adminCameraError, setAdminCameraError] = useState(null);
+      const [remoteLiveStream, setRemoteLiveStream] = useState({
+        active: false,
+        frame: null,
+        updatedAt: 0
+      });
 
-      // ອ້າງອີງ State ປັດຈຸບັນສະເໝີເວລາຂຽນຂຶ້ນ Firebase
-      const stateRef = useRef({ users, bets, transactions, roundsHistory, currentRound });
+      const stateRef = useRef({ users, bets, transactions, roundsHistory, currentRound, chatMessages });
       useEffect(() => {
-        stateRef.current = { users, bets, transactions, roundsHistory, currentRound };
-      }, [users, bets, transactions, roundsHistory, currentRound]);
+        stateRef.current = { users, bets, transactions, roundsHistory, currentRound, chatMessages };
+      }, [users, bets, transactions, roundsHistory, currentRound, chatMessages]);
 
       const currentUser = useMemo(() => {
         return users.find(u => u.id === activeUserId) || users[0] || null;
       }, [users, activeUserId]);
+
+      // ກວດສອບວ່າກ້ອງໄລສົດຈາກແອັດມິນກຳລັງອອນແອຈິງຫຼືບໍ່ (ອັບເດດພາຍໃນ 12 ວິນາທີ)
+      const isLiveBroadcastActive = useMemo(() => {
+        if (!remoteLiveStream || !remoteLiveStream.active || !remoteLiveStream.frame) return false;
+        return (Date.now() - (remoteLiveStream.updatedAt || 0)) < 15000;
+      }, [remoteLiveStream, currentRound.timer]);
 
       const handleSecretLogoTap = () => {
         const next = logoSecretTaps + 1;
@@ -510,6 +525,7 @@
         }
 
         const gameRef = firebaseDb.ref('lrl_game_state');
+        const liveRef = firebaseDb.ref('lrl_live_stream');
 
         const handleValueChange = (snapshot) => {
           const data = snapshot.val();
@@ -537,6 +553,11 @@
               localStorage.setItem(STORAGE_KEYS.ROUNDS, JSON.stringify(cloudRounds));
             }
 
+            const cloudChats = toArray(data.chatMessages);
+            if (cloudChats.length > 0) {
+              setChatMessages(cloudChats.slice(-40));
+            }
+
             if (data.currentRound) {
               setCurrentRound(prev => {
                 const isNewRound = data.currentRound.roundId !== prev.roundId;
@@ -546,47 +567,57 @@
               });
             }
           } else {
-            // ຖ້າຖານຂໍ້ມູນເທິງ Firebase ຍັງຫວ່າງເປົ່າ ໃຫ້ສ້າງຂໍ້ມູນເລີ່ມຕົ້ນຂຶ້ນໄປທັນທີ
             gameRef.set({
               users: stateRef.current.users,
               bets: stateRef.current.bets,
               transactions: stateRef.current.transactions,
               roundsHistory: stateRef.current.roundsHistory,
               currentRound: stateRef.current.currentRound,
+              chatMessages: stateRef.current.chatMessages,
               updatedAt: Date.now()
             }).catch(err => {
               if (err && err.code === 'PERMISSION_DENIED') {
                 setCloudStatus('permission_denied');
-                setCloudErrorDetail('Firebase ຍັງບໍ່ໄດ້ເປີດ Rules (.read: true, .write: true)');
               }
             });
           }
         };
 
+        // ຟັງສັນຍານພາບໄລສົດຈາກແອັດມິນແຍກຕ່າງຫາກເພື່ອຄວາມໄວສູງສຸດ
+        const handleLiveChange = (snapshot) => {
+          const liveData = snapshot.val();
+          if (liveData) {
+            setRemoteLiveStream(liveData);
+          } else {
+            setRemoteLiveStream({ active: false, frame: null, updatedAt: 0 });
+          }
+        };
+
         const handleError = (err) => {
-          console.error('Firebase Realtime Error:', err);
           if (err && (err.code === 'PERMISSION_DENIED' || String(err.message).includes('permission_denied'))) {
             setCloudStatus('permission_denied');
             setCloudErrorDetail('Firebase ລ໊ອກສິດ! ກະລຸນາເຂົ້າ Firebase Console ➔ Realtime Database ➔ Rules ແລ້ວປ່ຽນເປັນ true');
           } else {
             setCloudStatus('error');
-            setCloudErrorDetail(err?.message || 'ການເຊື່ອມຕໍ່ຂັດຂ້ອງ');
           }
         };
 
         gameRef.on('value', handleValueChange, handleError);
+        liveRef.on('value', handleLiveChange);
+
         return () => {
           gameRef.off('value', handleValueChange);
+          liveRef.off('value', handleLiveChange);
         };
       }, []);
 
-      // ຟັງຊັນບັນທຶກຂໍ້ມູນລົງທັງໃນເຄື່ອງ ແລະ ຍິງຂຶ້ນ Firebase Realtime Database ທັນທີ
       const saveImmediate = async (override = {}) => {
         const nextUsers = override.users !== undefined ? override.users : stateRef.current.users;
         const nextBets = override.bets !== undefined ? override.bets : stateRef.current.bets;
         const nextTxs = override.transactions !== undefined ? override.transactions : stateRef.current.transactions;
         const nextRounds = override.roundsHistory !== undefined ? override.roundsHistory : stateRef.current.roundsHistory;
         const nextCurRound = override.currentRound !== undefined ? override.currentRound : stateRef.current.currentRound;
+        const nextChats = override.chatMessages !== undefined ? override.chatMessages : stateRef.current.chatMessages;
 
         if (override.users !== undefined) {
           localStorage.setItem(STORAGE_KEYS.USERS, JSON.stringify(nextUsers));
@@ -608,12 +639,14 @@
           localStorage.setItem(STORAGE_KEYS.CURRENT_ROUND, JSON.stringify(nextCurRound));
           setCurrentRound(nextCurRound);
         }
+        if (override.chatMessages !== undefined) {
+          setChatMessages(nextChats);
+        }
 
         if (!firebaseDb) return false;
 
         try {
           const gameRef = firebaseDb.ref('lrl_game_state');
-          // ດຶງຂໍ້ມູນລ່າສຸດຈາກ Cloud ມາ Merge ເພື່ອປ້ອງກັນການຂຽນທັບຂໍ້ມູນຂອງເຄື່ອງອື່ນ
           const snap = await gameRef.get();
           const remote = snap.exists() ? snap.val() : null;
 
@@ -621,6 +654,7 @@
           const finalBets = remote?.bets ? mergeArraysById(nextBets, remote.bets, 'id') : nextBets;
           const finalTxs = remote?.transactions ? mergeArraysById(nextTxs, remote.transactions, 'id') : nextTxs;
           const finalRounds = remote?.roundsHistory ? mergeArraysById(nextRounds, remote.roundsHistory, 'roundId') : nextRounds;
+          const finalChats = remote?.chatMessages ? mergeArraysById(nextChats, remote.chatMessages, 'id').slice(-40) : nextChats.slice(-40);
 
           await gameRef.set({
             users: finalUsers,
@@ -628,6 +662,7 @@
             transactions: finalTxs,
             roundsHistory: finalRounds,
             currentRound: nextCurRound,
+            chatMessages: finalChats,
             updatedAt: Date.now()
           });
 
@@ -635,10 +670,8 @@
           setCloudErrorDetail('');
           return true;
         } catch (err) {
-          console.error('Firebase write error:', err);
           if (err && (err.code === 'PERMISSION_DENIED' || String(err.message).includes('permission_denied'))) {
             setCloudStatus('permission_denied');
-            setCloudErrorDetail('Firebase ບໍ່ອະນຸຍາດໃຫ້ບັນທຶກ! ກະລຸນາຕັ້ງຄ່າ Rules ໃນ Firebase ເປັນ .read: true, .write: true');
           } else {
             setCloudStatus('error');
           }
@@ -656,6 +689,7 @@
             if (data.bets) setBets(toArray(data.bets));
             if (data.transactions) setTransactions(toArray(data.transactions));
             if (data.roundsHistory) setRoundsHistory(toArray(data.roundsHistory));
+            if (data.chatMessages) setChatMessages(toArray(data.chatMessages));
             if (data.currentRound) setCurrentRound(prev => ({ ...data.currentRound, timer: prev.timer }));
             setCloudStatus('connected');
           }
@@ -689,30 +723,126 @@
         }
       }, [chatMessages, playerTab]);
 
-      const startAdminCamera = async () => {
-        setAdminCameraError(null);
+      // ==================== REAL-TIME CAMERA BROADCAST ENGINE (ADMIN -> FIREBASE -> PLAYER) ====================
+      const pushVideoFrameToCloud = () => {
+        if (!adminVideoRef.current || !firebaseDb) return;
+        const video = adminVideoRef.current;
+        if (video.readyState < 2) return;
+
         try {
-          const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+          if (!captureCanvasRef.current) {
+            captureCanvasRef.current = document.createElement('canvas');
+          }
+          const canvas = captureCanvasRef.current;
+          // ບີບອັດຂະໜາດພາບ 360x202 ເພື່ອໃຫ້ສົ່ງຜ່ານ Firebase ລื่นໄຫຼແບບ Real-time ບໍ່ຄ້າງ
+          canvas.width = 360;
+          canvas.height = 202;
+          const ctx = canvas.getContext('2d');
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          const base64Frame = canvas.toDataURL('image/jpeg', 0.52);
+
+          firebaseDb.ref('lrl_live_stream').set({
+            active: true,
+            frame: base64Frame,
+            roundId: stateRef.current.currentRound?.roundId || 0,
+            updatedAt: Date.now()
+          }).catch(() => {});
+        } catch (e) {}
+      };
+
+      const startAdminCamera = async (overrideFacingMode) => {
+        setAdminCameraError(null);
+        const modeToUse = overrideFacingMode || cameraFacingMode;
+        try {
+          // ປິດ Stream ເກົ່າກ່ອນຖ້າມີ
+          if (adminVideoRef.current && adminVideoRef.current.srcObject) {
+            adminVideoRef.current.srcObject.getTracks().forEach(t => t.stop());
+          }
+          if (broadcastIntervalRef.current) {
+            clearInterval(broadcastIntervalRef.current);
+          }
+
+          let stream;
+          try {
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { facingMode: modeToUse, width: { ideal: 640 }, height: { ideal: 360 } },
+              audio: false
+            });
+          } catch (fallbackErr) {
+            stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+          }
+
           if (adminVideoRef.current) {
             adminVideoRef.current.srcObject = stream;
-            adminVideoRef.current.play();
+            await adminVideoRef.current.play();
           }
+
           setIsAdminCameraActive(true);
-          triggerToast('ເປີດກ້ອງໄລສົດສຳເລັດ!', 'success');
+
+          // ເລີ່ມຍິງພາບຈາກກ້ອງແອັດມິນຂຶ້ນ Firebase ທຸກໆ 350ms (~3 FPS) ເພື່ອໃຫ້ຜູ້ຫຼິ້ນທຸກເຄື່ອງເຫັນສົດໆ
+          broadcastIntervalRef.current = setInterval(pushVideoFrameToCloud, 350);
+          setTimeout(pushVideoFrameToCloud, 150);
+
+          triggerToast('🔴 ເປີດກ້ອງ ແລະ ຖ່າຍທອດສົດໄປຫາຜູ້ຫຼິ້ນທຸກເຄື່ອງແລ້ວ!', 'success');
         } catch (err) {
-          setAdminCameraError('ບໍ່ສາມາດເຂົ້າເຖິງກ້ອງວິດີໂອໄດ້ (ກະລຸນາອະນຸຍາດສິດກ້ອງ)');
+          setAdminCameraError('ບໍ່ສາມາດເຂົ້າເຖິງກ້ອງວິດີໂອໄດ້ (ກະລຸນາອະນຸຍາດສິດກ້ອງໃນເບຣົາເຊີ)');
           triggerToast('ບໍ່ສາມາດເປີດກ້ອງໄດ້', 'error');
         }
       };
 
+      const switchAdminCameraFacing = () => {
+        const nextMode = cameraFacingMode === 'environment' ? 'user' : 'environment';
+        setCameraFacingMode(nextMode);
+        if (isAdminCameraActive) {
+          startAdminCamera(nextMode);
+        }
+      };
+
       const stopAdminCamera = () => {
+        if (broadcastIntervalRef.current) {
+          clearInterval(broadcastIntervalRef.current);
+          broadcastIntervalRef.current = null;
+        }
         if (adminVideoRef.current && adminVideoRef.current.srcObject) {
           const stream = adminVideoRef.current.srcObject;
           stream.getTracks().forEach(track => track.stop());
           adminVideoRef.current.srcObject = null;
         }
         setIsAdminCameraActive(false);
+        if (firebaseDb) {
+          firebaseDb.ref('lrl_live_stream').set({
+            active: false,
+            frame: null,
+            updatedAt: Date.now()
+          }).catch(() => {});
+        }
         triggerToast('ປິດກ້ອງໄລສົດແລ້ວ', 'info');
+      };
+
+      // ທຳຄວາມສະອາດກ້ອງເມື່ອອອກຈາກໜ້າ
+      useEffect(() => {
+        return () => {
+          if (broadcastIntervalRef.current) clearInterval(broadcastIntervalRef.current);
+        };
+      }, []);
+
+      const handleSendChatMessage = () => {
+        if (!chatInput.trim()) return;
+        soundClick();
+        const maskedUser = currentUser
+          ? ('XXXXX' + String(currentUser.phone).slice(-3))
+          : (appAccessMode === 'admin' ? '👑 ADMIN' : 'XXXXX999');
+
+        const newMsg = {
+          id: Date.now() + Math.floor(Math.random() * 1000),
+          user: maskedUser,
+          text: chatInput.trim(),
+          time: new Date().toTimeString().substring(0, 5)
+        };
+
+        const updatedChats = [...chatMessages, newMsg].slice(-40);
+        setChatInput('');
+        saveImmediate({ chatMessages: updatedChats });
       };
 
       const handleLoginSubmit = async (e) => {
@@ -915,9 +1045,9 @@
         soundFanfare();
 
         if (cloudOk) {
-          triggerToast(`ບັນທຶກບັນຊີ ${targetUser.name} ຂຶ້ນ Firebase ສຳເລັດ! ທຸກເຄື່ອງລ໊ອກອິນໄດ້ທັນທີ`, 'success');
+          triggerToast(`ບັນທຶກບັນຊີ ${targetUser.name} ຂຶ້ນ Firebase ສຳເລັດ!`, 'success');
         } else {
-          triggerToast(`⚠️ ບໍ່ສາມາດບັນທຶກຂຶ້ນ Firebase! ກະລຸນາເປີດ Rules (.write: true) ໃນ Firebase Console`, 'error');
+          triggerToast(`⚠️ ບໍ່ສາມາດບັນທຶກຂຶ້ນ Firebase! ກະລຸນາເປີດ Rules (.write: true)`, 'error');
         }
       };
 
@@ -1467,7 +1597,6 @@
           {/* Main Container */}
           <div className="w-full max-w-md bg-[#FAFAFA] min-h-screen flex flex-col shadow-2xl relative overflow-x-hidden border-x border-red-100">
 
-            {/* ແຖບແຈ້ງເຕືອນຖ້າ Firebase ຍັງບໍ່ໄດ້ເປີດ Rules */}
             {cloudStatus === 'permission_denied' && (
               <div className="bg-amber-400 text-slate-950 px-3.5 py-2 text-[11px] font-extrabold text-center border-b border-amber-500">
                 ⚠️ ຖານຂໍ້ມູນ Firebase ຍັງລ໊ອກສິດຢູ່! ກະລຸນາເຂົ້າ Firebase Console ➔ Realtime Database ➔ Rules ແລ້ວປ່ຽນ .read ແລະ .write ເປັນ true ເພື່ອໃຫ້ທຸກເຄື່ອງເຊື່ອມຕໍ່ກັນ.
@@ -1754,12 +1883,17 @@
                         soundClick();
                         setPlayerTab('live');
                       }}
-                      className={`flex-1 py-1.5 px-2 rounded-full text-xs font-extrabold transition flex items-center justify-center gap-1 ${
+                      className={`flex-1 py-1.5 px-2 rounded-full text-xs font-extrabold transition flex items-center justify-center gap-1 relative ${
                         playerTab === 'live' ? 'bg-white text-[#EF4136] shadow-sm' : 'text-white hover:bg-white/10'
                       }`}
                     >
-                      <span className={`w-2 h-2 rounded-full ${playerTab === 'live' ? 'bg-[#EF4136]' : 'bg-amber-300'} animate-ping`}></span>
+                      <span className={`w-2 h-2 rounded-full ${isLiveBroadcastActive ? 'bg-emerald-400' : (playerTab === 'live' ? 'bg-[#EF4136]' : 'bg-amber-300')} animate-ping`}></span>
                       <span>ຖ່າຍທອດສົດ</span>
+                      {isLiveBroadcastActive && (
+                        <span className="bg-emerald-500 text-white text-[8px] font-black px-1.5 py-0.2 rounded-full ml-0.5">
+                          LIVE
+                        </span>
+                      )}
                     </button>
                   </div>
 
@@ -1833,7 +1967,14 @@
                     <Shield className="w-5 h-5" />
                   </div>
                   <div>
-                    <h2 className="text-sm font-black text-white leading-tight">ແຜງຄວບຄຸມແອັດມິນ</h2>
+                    <h2 className="text-sm font-black text-white leading-tight flex items-center gap-1.5">
+                      <span>ແຜງຄວບຄຸມແອັດມິນ</span>
+                      {isAdminCameraActive && (
+                        <span className="bg-emerald-500 text-white text-[9px] px-2 py-0.2 rounded-full animate-pulse">
+                          ● ON AIR
+                        </span>
+                      )}
+                    </h2>
                     <p className="text-[10px] text-red-100">ງວດ #{currentRound.roundId} • ລູກຄ້າ {users.length} ຄົນ</p>
                   </div>
                 </div>
@@ -1841,6 +1982,7 @@
                 <button
                   onClick={() => {
                     soundClick();
+                    if (isAdminCameraActive) stopAdminCamera();
                     setAppAccessMode('auth');
                     setIsAdminPortal(true);
                     setAuthViewMode('admin_login');
@@ -1858,6 +2000,22 @@
               <div className="flex-1 flex flex-col">
                 {playerTab === 'bet' && (
                   <div className="flex-1 px-3.5 py-3.5 space-y-3.5 pb-6">
+
+                    {/* ແຖບແຈ້ງເຕືອນເມື່ອແອັດມິນກຳລັງເປີດກ້ອງໄລສົດ */}
+                    {isLiveBroadcastActive && (
+                      <div
+                        onClick={() => { soundSelect(); setPlayerTab('live'); }}
+                        className="bg-gradient-to-r from-emerald-600 to-teal-600 text-white px-4 py-2.5 rounded-2xl shadow-md flex items-center justify-between cursor-pointer animate-pulse"
+                      >
+                        <div className="flex items-center gap-2 text-xs font-black">
+                          <span className="w-2.5 h-2.5 rounded-full bg-red-400 animate-ping"></span>
+                          <span>🎥 ແອັດມິນກຳລັງຖ່າຍທອດສົດກ້ອງຕົວຈິງ!</span>
+                        </div>
+                        <span className="bg-white text-emerald-700 text-[10px] font-black px-2.5 py-1 rounded-full">
+                          ກົດເບິ່ງສົດ ➔
+                        </span>
+                      </div>
+                    )}
 
                     <div className="bg-[#FFF5F5] rounded-[24px] p-4 border border-red-200/80 shadow-xs relative overflow-hidden">
                       <div className="flex items-center justify-between">
@@ -2180,44 +2338,77 @@
                   </div>
                 )}
 
+                {/* ==================== PLAYER LIVE STREAM VIEW (ຮັບພາບສົດຈາກກ້ອງແອັດມິນ) ==================== */}
                 {playerTab === 'live' && (
                   <div className="flex-1 flex flex-col bg-white text-slate-900 overflow-hidden">
-                    <div className="relative aspect-video bg-gradient-to-b from-[#991B1B] via-[#DC2626] to-[#7F1D1D] border-b border-red-200 flex flex-col items-center justify-between p-3 text-white">
-                      <div className="w-full flex justify-between items-center text-[11px]">
-                        <div className="flex items-center gap-1.5 bg-black/35 px-2.5 py-1 rounded-full">
-                          <span className="w-2 h-2 rounded-full bg-amber-300 animate-ping"></span>
-                          <span className="font-extrabold">ຖ່າຍທອດສົດ ປູປາເຕົ້າ ລວຍ ລວຍ ລວຍ</span>
+                    <div className="relative aspect-video bg-gradient-to-b from-[#991B1B] via-[#DC2626] to-[#7F1D1D] border-b border-red-200 flex flex-col items-center justify-between overflow-hidden text-white">
+                      {/* ຖ້າແອັດມິນເປີດກ້ອງ ຈະສະແດງພາບສົດຈາກກ້ອງແອັດມິນທັນທີ */}
+                      {isLiveBroadcastActive && (
+                        <img
+                          src={remoteLiveStream.frame}
+                          alt="Admin Live Broadcast"
+                          className="absolute inset-0 w-full h-full object-cover z-0"
+                        />
+                      )}
+
+                      <div className="w-full flex justify-between items-center text-[11px] p-3 relative z-10 bg-gradient-to-b from-black/60 to-transparent">
+                        <div className="flex items-center gap-1.5 bg-black/50 backdrop-blur-xs px-2.5 py-1 rounded-full border border-white/20">
+                          <span className={`w-2 h-2 rounded-full ${isLiveBroadcastActive ? 'bg-emerald-400' : 'bg-amber-300'} animate-ping`}></span>
+                          <span className="font-extrabold">
+                            {isLiveBroadcastActive ? '🔴 ກ້ອງສົດຈາກສະຕູດິໂອແອັດມິນ' : 'ສະຕູດິໂອ ປູປາເຕົ້າ ລວຍ ລວຍ ລວຍ'}
+                          </span>
                         </div>
                         <span className="font-num bg-white text-[#EF4136] px-2.5 py-0.5 rounded-full font-black text-xs shadow-2xs">
                           ງວດ #{currentRound.roundId}
                         </span>
                       </div>
 
-                      <div className="my-auto text-center">
-                        <div className="w-20 h-20 mx-auto rounded-full bg-gradient-to-tr from-amber-500 via-yellow-300 to-white p-1 flex items-center justify-center shadow-2xl">
-                          <div className="w-full h-full rounded-full bg-[#991B1B] border-2 border-amber-200 flex flex-col items-center justify-center">
-                            <AnimalIllustration id={3} className="w-10 h-10 animate-bounce" />
+                      {!isLiveBroadcastActive ? (
+                        <div className="my-auto text-center relative z-10 px-4">
+                          <div className="w-16 h-16 mx-auto rounded-full bg-gradient-to-tr from-amber-500 via-yellow-300 to-white p-1 flex items-center justify-center shadow-2xl">
+                            <div className="w-full h-full rounded-full bg-[#991B1B] border-2 border-amber-200 flex flex-col items-center justify-center">
+                              <AnimalIllustration id={3} className="w-9 h-9 animate-bounce" />
+                            </div>
+                          </div>
+
+                          <p className="text-[11px] font-bold text-amber-200 mt-1.5">
+                            ⏳ ລໍຖ້າແອັດມິນເປີດກ້ອງໄລສົດ... (ຜົນອອກລ່າສຸດ)
+                          </p>
+
+                          <div className="mt-2 flex items-center justify-center gap-2.5">
+                            {currentRound.winningAnimals.slice(0, 3).map((id, idx) => (
+                              <div key={idx} className="w-11 h-11 rounded-2xl bg-white border-2 border-amber-300 flex items-center justify-center p-1 shadow-lg">
+                                <AnimalIllustration id={id} className="w-8 h-8" />
+                              </div>
+                            ))}
                           </div>
                         </div>
-
-                        <div className="mt-3 flex items-center justify-center gap-3">
-                          {currentRound.winningAnimals.slice(0, 3).map((id, idx) => (
-                            <div key={idx} className="w-12 h-12 rounded-2xl bg-white border-2 border-amber-300 flex items-center justify-center p-1 shadow-lg">
-                              <AnimalIllustration id={id} className="w-9 h-9" />
-                            </div>
-                          ))}
+                      ) : (
+                        <div className="mt-auto w-full px-3 pb-1 flex justify-end relative z-10">
+                          <div className="bg-black/55 backdrop-blur-xs border border-white/25 rounded-2xl px-2.5 py-1 flex items-center gap-1.5">
+                            <span className="text-[9px] font-bold text-amber-300">ຜົນລ່າສຸດ:</span>
+                            {currentRound.winningAnimals.slice(0, 3).map((id, idx) => (
+                              <div key={idx} className="w-6 h-6 rounded-lg bg-white p-0.5 flex items-center justify-center">
+                                <AnimalIllustration id={id} className="w-5 h-5" />
+                              </div>
+                            ))}
+                          </div>
                         </div>
-                      </div>
+                      )}
 
-                      <div className="w-full flex justify-between items-center text-[10px] text-red-100">
-                        <span className="font-bold">● ສະຕູດິໂອຖ່າຍທອດສົດທາງການ</span>
-                        <span className="text-amber-200 font-num font-bold">ຜູ້ຊົມສົດ: 3,142 ຄົນ</span>
+                      <div className="w-full flex justify-between items-center text-[10px] text-red-100 px-3 py-2 relative z-10 bg-gradient-to-t from-black/70 to-transparent">
+                        <span className="font-bold">
+                          {isLiveBroadcastActive ? '🟢 ກຳລັງອອກອາກາດສົດ (LIVE ON AIR)' : '● ສະຕູດິໂອຖ່າຍທອດສົດທາງການ'}
+                        </span>
+                        <span className="text-amber-200 font-num font-bold">
+                          ປິດຮອບໃນ: {timerParts.m}:{timerParts.s}
+                        </span>
                       </div>
                     </div>
 
                     <div className="flex-1 bg-white flex flex-col">
                       <div className="px-4 py-2.5 bg-red-50/70 border-b border-red-100 text-xs font-extrabold text-slate-800 flex justify-between items-center">
-                        <span>💬 ຫ້ອງສົນທະນາສົດ (Live Chat)</span>
+                        <span>💬 ຫ້ອງສົນທະນາສົດອອນລາຍ (Live Chat)</span>
                         <button
                           onClick={() => setPlayerTab('bet')}
                           className="text-xs bg-[#EF4136] text-white px-3 py-1 rounded-full font-bold shadow-2xs"
@@ -2226,7 +2417,7 @@
                         </button>
                       </div>
 
-                      <div ref={chatScrollRef} className="flex-1 p-3.5 space-y-2.5 overflow-y-auto text-xs">
+                      <div ref={chatScrollRef} className="flex-1 p-3.5 space-y-2.5 overflow-y-auto text-xs max-h-[340px]">
                         {chatMessages.map(msg => (
                           <div key={msg.id} className="flex items-start gap-2.5 border-b border-slate-100 pb-2">
                             <div className="w-7 h-7 rounded-full bg-red-50 text-[#EF4136] border border-red-200 flex items-center justify-center text-xs font-bold flex-shrink-0">
@@ -2250,32 +2441,12 @@
                           value={chatInput}
                           onChange={(e) => setChatInput(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.key === 'Enter' && chatInput.trim()) {
-                              soundClick();
-                              setChatMessages(prev => [...prev, {
-                                id: Date.now(),
-                                user: currentUser ? currentUser.phone.replace(/(\d{5})\d{4}/, 'XXXXX$1'.slice(-8)) : 'XXXXX999',
-                                text: chatInput.trim(),
-                                time: new Date().toTimeString().substring(0, 5)
-                              }]);
-                              setChatInput('');
-                            }
+                            if (e.key === 'Enter') handleSendChatMessage();
                           }}
                           className="flex-1 bg-slate-50 border border-red-200 rounded-xl px-3 py-2 text-xs focus:outline-none focus:border-[#EF4136] focus:bg-white"
                         />
                         <button
-                          onClick={() => {
-                            if (chatInput.trim()) {
-                              soundClick();
-                              setChatMessages(prev => [...prev, {
-                                id: Date.now(),
-                                user: currentUser ? currentUser.phone.replace(/(\d{5})\d{4}/, 'XXXXX$1'.slice(-8)) : 'XXXXX999',
-                                text: chatInput.trim(),
-                                time: new Date().toTimeString().substring(0, 5)
-                              }]);
-                              setChatInput('');
-                            }
-                          }}
+                          onClick={handleSendChatMessage}
                           className="bg-[#EF4136] hover:bg-[#DC2626] text-white px-3.5 py-2 rounded-xl font-bold text-xs flex items-center gap-1 transition"
                         >
                           <Send className="w-3.5 h-3.5" />
@@ -2342,12 +2513,15 @@
                   </button>
                   <button
                     onClick={() => { soundClick(); setAdminTab('admin_live'); }}
-                    className={`py-2 rounded-xl text-center transition flex flex-col items-center gap-0.5 ${
+                    className={`py-2 rounded-xl text-center transition flex flex-col items-center gap-0.5 relative ${
                       adminTab === 'admin_live' ? 'bg-[#EF4136] text-white shadow-xs' : 'text-slate-600 hover:bg-red-50'
                     }`}
                   >
                     <Video className="w-4 h-4" />
                     <span>ໄລສົດ</span>
+                    {isAdminCameraActive && (
+                      <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-emerald-500 animate-ping"></span>
+                    )}
                   </button>
                   <button
                     onClick={() => { soundClick(); setAdminTab('cloud_sync'); }}
@@ -2359,6 +2533,128 @@
                     <span>ອອນລາຍ</span>
                     <span className={`absolute top-1 right-1 w-2 h-2 rounded-full ${cloudStatus === 'connected' ? 'bg-emerald-500' : 'bg-amber-500 animate-ping'}`}></span>
                   </button>
+                </div>
+
+                {/* ເກັບວິດີໂອແອັດມິນໄວ້ໃນ DOM ສະເໝີ ເພື່ອໃຫ້ສາມາດໄລສົດຕໍ່ເນື່ອງເຖິງແມ່ນວ່າແອັດມິນຈະສະຫຼັບໄປແຖບອື່ນ */}
+                <div className={adminTab === 'admin_live' ? 'p-4 space-y-4' : 'hidden'}>
+                  <div className="bg-white border border-red-200 rounded-3xl p-4 shadow-xs space-y-3">
+                    <div className="flex items-center justify-between border-b border-red-100 pb-2.5">
+                      <div className="flex items-center gap-2">
+                        <div className="w-9 h-9 rounded-2xl bg-[#EF4136] text-white flex items-center justify-center">
+                          <Video className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <h3 className="text-sm font-black text-slate-900">ສະຕູດິໂອໄລສົດ (Admin Live Broadcaster)</h3>
+                          <p className="text-[10px] text-slate-500">ພາບຈາກກ້ອງນີ້ຈະສົ່ງໄປຫາໜ້າ "ຖ່າຍທອດສົດ" ຂອງລູກຄ້າທຸກເຄື່ອງທັນທີ</p>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={switchAdminCameraFacing}
+                        className="bg-red-50 hover:bg-red-100 text-[#EF4136] border border-red-200 px-2.5 py-1.5 rounded-xl text-[10px] font-extrabold flex items-center gap-1"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>ສະຫຼັບກ້ອງ</span>
+                      </button>
+                    </div>
+
+                    <div className="aspect-video bg-slate-950 rounded-2xl overflow-hidden relative flex flex-col items-center justify-center border-2 border-slate-800 shadow-inner">
+                      <video
+                        ref={adminVideoRef}
+                        autoPlay
+                        playsInline
+                        muted
+                        className={`w-full h-full object-cover ${isAdminCameraActive ? 'block' : 'hidden'}`}
+                      />
+
+                      {!isAdminCameraActive && (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 to-slate-950 text-white p-4 text-center">
+                          <Video className="w-12 h-12 text-[#EF4136] mb-2 animate-bounce" />
+                          <span className="text-xs font-bold text-slate-300">ກ້ອງໄລສົດຍັງບໍ່ໄດ້ເປີດ</span>
+                          <p className="text-[10px] text-slate-500 mt-1">ກົດປຸ່ມ "ເປີດກ້ອງໄລສົດ" ດ້ານລຸ່ມເພື່ອສົ່ງພາບສົດໄປຫາຜູ້ຫຼິ້ນທຸກເຄື່ອງ</p>
+                        </div>
+                      )}
+
+                      {isAdminCameraActive && (
+                        <div className="absolute top-2 right-3 bg-red-600 text-white text-[9px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-md">
+                          <span className="w-2 h-2 rounded-full bg-amber-300 animate-ping"></span>
+                          <span>LIVE STREAMING TO PLAYERS</span>
+                        </div>
+                      )}
+                    </div>
+
+                    {adminCameraError && (
+                      <div className="bg-red-50 text-[#EF4136] p-2.5 rounded-xl border border-red-200 text-xs font-bold text-center">
+                        {adminCameraError}
+                      </div>
+                    )}
+
+                    <div className="flex gap-2">
+                      {!isAdminCameraActive ? (
+                        <button
+                          onClick={() => startAdminCamera()}
+                          className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3 rounded-2xl text-xs transition active:scale-95 shadow flex items-center justify-center gap-1.5"
+                        >
+                          <Video className="w-4 h-4" />
+                          <span>ເປີດກ້ອງໄລສົດ (ສົ່ງພາບຫາຜູ້ຫຼິ້ນທຸກເຄື່ອງ)</span>
+                        </button>
+                      ) : (
+                        <button
+                          onClick={stopAdminCamera}
+                          className="flex-1 bg-red-700 hover:bg-red-800 text-white font-black py-3 rounded-2xl text-xs transition active:scale-95 shadow flex items-center justify-center gap-1.5"
+                        >
+                          <XCircle className="w-4 h-4" />
+                          <span>ຢຸດການຖ່າຍທອດສົດ (Stop Live)</span>
+                        </button>
+                      )}
+                    </div>
+
+                    {/* ກ່ອງຄວບຄຸມຜົນອອກດ່ວນຂະນະໄລສົດ */}
+                    <div className="bg-[#FFF5F5] border border-red-200 rounded-2xl p-3 space-y-2">
+                      <span className="text-[11px] font-black text-slate-800 block">
+                        🎲 ຕັ້ງຄ່າຜົນອອກຂະນະໄລສົດ (ງວດ #{currentRound.roundId}):
+                      </span>
+                      <div className="grid grid-cols-3 gap-2">
+                        {adminManualDice.map((id, idx) => {
+                          const a = ANIMALS.find(x => x.id === id);
+                          return (
+                            <div key={idx} className="bg-white border-2 border-[#EF4136] rounded-xl p-1.5 flex items-center justify-center gap-1.5">
+                              <AnimalIllustration id={id} className="w-6 h-6" />
+                              <span className="text-xs font-black">{a?.name}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div className="grid grid-cols-6 gap-1 pt-1">
+                        {ANIMALS.map(a => (
+                          <button
+                            key={a.id}
+                            onClick={() => {
+                              soundClick();
+                              setAdminManualDice([adminManualDice[1], adminManualDice[2], a.id]);
+                            }}
+                            className="bg-white hover:bg-red-50 border border-red-200 rounded-lg p-1 flex flex-col items-center"
+                          >
+                            <AnimalIllustration id={a.id} className="w-5 h-5" />
+                            <span className="text-[9px] font-bold mt-0.5">{a.name}</span>
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => {
+                        soundFanfare();
+                        executeDraw(adminManualDice);
+                        triggerToast('ອອກອາກາດຜົນລາງວັນສຳເລັດ!', 'success');
+                      }}
+                      className="w-full bg-[#EF4136] hover:bg-[#DC2626] text-white font-black py-3 rounded-2xl text-xs transition active:scale-95 shadow-md flex items-center justify-center gap-1.5"
+                    >
+                      <RotateCcw className="w-4 h-4" />
+                      <span>ອອກອາກາດຜົນລາງວັນ & ຕັດຮອບໃໝ່ທັນທີ</span>
+                    </button>
+                  </div>
                 </div>
 
                 {adminTab === 'cloud_sync' && (
@@ -2675,85 +2971,6 @@
                           <span>ກົດຜົນອອກທັນທີ 🎲</span>
                         </button>
                       </div>
-                    </div>
-                  </div>
-                )}
-
-                {adminTab === 'admin_live' && (
-                  <div className="p-4 space-y-4">
-                    <div className="bg-white border border-red-200 rounded-3xl p-4 shadow-xs space-y-3">
-                      <div className="flex items-center gap-2 border-b border-red-100 pb-2.5">
-                        <div className="w-9 h-9 rounded-2xl bg-[#EF4136] text-white flex items-center justify-center">
-                          <Video className="w-5 h-5" />
-                        </div>
-                        <div>
-                          <h3 className="text-sm font-black text-slate-900">ສະຕູດິໂອໄລສົດ (Admin Live Broadcaster)</h3>
-                          <p className="text-[10px] text-slate-500">ເປີດກ້ອງວິດີໂອຕົວຈິງເພື່ອຖ່າຍທອດສົດໃຫ້ຜູ້ຫຼິ້ນເຫັນ</p>
-                        </div>
-                      </div>
-
-                      <div className="aspect-video bg-slate-950 rounded-2xl overflow-hidden relative flex flex-col items-center justify-center border-2 border-slate-800 shadow-inner">
-                        <video 
-                          ref={adminVideoRef} 
-                          autoPlay 
-                          playsInline 
-                          muted 
-                          className={`w-full h-full object-cover ${isAdminCameraActive ? 'block' : 'hidden'}`}
-                        />
-
-                        {!isAdminCameraActive && (
-                          <div className="absolute inset-0 flex flex-col items-center justify-center bg-gradient-to-b from-slate-900 to-slate-950 text-white p-4 text-center">
-                            <Video className="w-12 h-12 text-[#EF4136] mb-2 animate-bounce" />
-                            <span className="text-xs font-bold text-slate-300">ກ້ອງໄລສົດຍັງບໍ່ໄດ້ເປີດ</span>
-                            <p className="text-[10px] text-slate-500 mt-1">ກົດປຸ່ມ "ເປີດກ້ອງໄລສົດ" ດ້ານລຸ່ມເພື່ອເລີ່ມຕົ້ນອອກອາກາດ</p>
-                          </div>
-                        )}
-
-                        {isAdminCameraActive && (
-                          <div className="absolute top-2 right-3 bg-red-600 text-white text-[9px] font-black px-2.5 py-0.5 rounded-full flex items-center gap-1 shadow-md">
-                            <span className="w-2 h-2 rounded-full bg-amber-300 animate-ping"></span>
-                            <span>ADMIN LIVE ON AIR</span>
-                          </div>
-                        )}
-                      </div>
-
-                      {adminCameraError && (
-                        <div className="bg-red-50 text-[#EF4136] p-2.5 rounded-xl border border-red-200 text-xs font-bold text-center">
-                          {adminCameraError}
-                        </div>
-                      )}
-
-                      <div className="flex gap-2">
-                        {!isAdminCameraActive ? (
-                          <button
-                            onClick={startAdminCamera}
-                            className="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-black py-3 rounded-2xl text-xs transition active:scale-95 shadow flex items-center justify-center gap-1.5"
-                          >
-                            <Video className="w-4 h-4" />
-                            <span>ເປີດກ້ອງໄລສົດ (Start Camera)</span>
-                          </button>
-                        ) : (
-                          <button
-                            onClick={stopAdminCamera}
-                            className="flex-1 bg-red-700 hover:bg-red-800 text-white font-black py-3 rounded-2xl text-xs transition active:scale-95 shadow flex items-center justify-center gap-1.5"
-                          >
-                            <XCircle className="w-4 h-4" />
-                            <span>ປິດກ້ອງໄລສົດ (Stop Camera)</span>
-                          </button>
-                        )}
-                      </div>
-
-                      <button
-                        onClick={() => {
-                          soundFanfare();
-                          executeDraw(adminManualDice);
-                          triggerToast('ອອກອາກາດຜົນລາງວັນສຳເລັດ!', 'success');
-                        }}
-                        className="w-full bg-[#EF4136] hover:bg-[#DC2626] text-white font-black py-3 rounded-2xl text-xs transition active:scale-95 shadow-md flex items-center justify-center gap-1.5"
-                      >
-                        <RotateCcw className="w-4 h-4" />
-                        <span>ອອກອາກາດຜົນລາງວັນ ແລະ ຕັດຮອບໃໝ່ທັນທີ</span>
-                      </button>
                     </div>
                   </div>
                 )}
